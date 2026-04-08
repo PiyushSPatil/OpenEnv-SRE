@@ -1,0 +1,76 @@
+id: openenv-sre
+name: AI SRE Simulator
+version: 1.0.0
+
+description: >
+  A real-world OpenEnv environment simulating Site Reliability Engineering (SRE)
+  workflows. Agents must diagnose and resolve production system issues such as
+  high latency, database failures, and full system outages using logs, metrics,
+  and alerts.
+
+entrypoint:
+  module: server.app
+  object: app
+
+api:
+  reset: /reset
+  step: /step
+  state: /state
+
+tasks:
+  - id: easy_cache
+    description: Fix high latency caused by cache inefficiency
+    difficulty: easy
+
+  - id: medium_db
+    description: Resolve database connection failure
+    difficulty: medium
+
+  - id: hard_outage
+    description: Recover from multi-system production outage
+    difficulty: hard
+
+observation_space:
+  type: object
+  properties:
+    logs:
+      type: array
+      items:
+        type: string
+    metrics:
+      type: object
+    alerts:
+      type: array
+      items:
+        type: string
+    system_status:
+      type: string
+    step_count:
+      type: integer
+    max_steps:
+      type: integer
+    task_id:
+      type: string
+
+action_space:
+  type: object
+  properties:
+    action_type:
+      type: string
+      enum:
+        - restart_service
+        - scale_service
+        - clear_cache
+        - fix_db_connection
+        - noop
+    target:
+      type: string
+
+reward:
+  type: float
+  range: [-1.0, 1.0]
+
+metadata:
+  author: Piyush Patil
+  domain: DevOps / Site Reliability Engineering
+  difficulty: multi-level

@@ -1,0 +1,36 @@
+# -----------------------------
+# Python
+# -----------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment
+venv/
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Test cache
+.pytest_cache/
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# node_modules
+node_modules/
+
+ui/bun.lockb
