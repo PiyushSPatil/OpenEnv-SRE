@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
+from fastapi import Body
 
 from env.environment import SREEnvironment
 from env.models import Action
@@ -54,7 +55,7 @@ def root():
 # RESET ENDPOINT
 # -----------------------------
 @app.post("/reset")
-def reset(request: ResetRequest):
+def reset(request: ResetRequest = Body(default=ResetRequest())):
     try:
         observation = env.reset(task_id=request.task_id)
         return {
