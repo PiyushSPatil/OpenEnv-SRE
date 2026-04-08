@@ -1,3 +1,14 @@
+---
+title: OpenEnv SRE Simulator
+emoji: 🚀
+colorFrom: blue
+colorTo: green
+sdk: docker
+sdk_version:"latest"
+app_port: 7860
+pinned: false
+---
+
 # 🚀 OpenEnv SRE Simulator
 
 ### 🧠 AI-Powered DevOps Incident Response Environment
@@ -72,10 +83,7 @@ Dirty Cache 🟡 → Repeated DB hits → Performance drop
     "[ERROR] Database connection timeout",
     "[ERROR] API latency critical"
   ],
-  "alerts": [
-    "Database connection failure",
-    "High latency"
-  ]
+  "alerts": ["Database connection failure", "High latency"]
 }
 ```
 
@@ -189,12 +197,12 @@ flowchart TD
 
 ### Live Dashboard Includes:
 
-* 📊 Metrics (CPU, latency)
-* 📜 Logs (real-time system logs)
-* 🚨 Alerts (critical issues)
-* 🧩 System Diagram (API → DB → Cache)
-* 🧠 AI Explanation (why action was taken)
-* 📈 Action Timeline
+- 📊 Metrics (CPU, latency)
+- 📜 Logs (real-time system logs)
+- 🚨 Alerts (critical issues)
+- 🧩 System Diagram (API → DB → Cache)
+- 🧠 AI Explanation (why action was taken)
+- 📈 Action Timeline
 
 ---
 
@@ -259,10 +267,10 @@ HF_TOKEN=<your-token>
 
 # 🚀 Future Work
 
-* 🌐 Network failure simulation
-* 🧠 Reinforcement learning agents
-* 🧩 Multi-service scaling policies
-* 📉 Memory leak detection
+- 🌐 Network failure simulation
+- 🧠 Reinforcement learning agents
+- 🧩 Multi-service scaling policies
+- 📉 Memory leak detection
 
 ---
 
