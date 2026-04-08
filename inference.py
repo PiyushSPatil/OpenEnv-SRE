@@ -8,7 +8,9 @@ from openai import OpenAI
 # -----------------------------
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:7860")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY")
+HF_TOKEN = os.getenv("HF_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+API_KEY = HF_TOKEN or OPENAI_API_KEY
 
 MAX_STEPS = 6
 ENV_NAME = "openenv_sre"
