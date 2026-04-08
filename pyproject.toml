@@ -2,16 +2,19 @@
 name = "openenv-sre"
 version = "0.1.0"
 description = "AI-powered SRE simulation environment"
-authors = [
-  { name="Piyush Patil" }
-]
+authors = [{ name = "Piyush Patil" }]
+
 dependencies = [
   "fastapi",
   "uvicorn",
   "requests",
   "pydantic",
-  "openai"
+  "openai",
+  "openenv>=0.2.0"
 ]
+
+[project.scripts]
+server = "server.app:main"
 
 [build-system]
 requires = ["setuptools"]
