@@ -1,7 +1,14 @@
 import os
 import requests
 from typing import List
-from openai import OpenAI
+
+# -----------------------------
+# SAFE OPENAI IMPORT
+# -----------------------------
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
 
 # -----------------------------
 # CONFIG
@@ -16,11 +23,14 @@ MAX_STEPS = 6
 ENV_NAME = "openenv_sre"
 
 # -----------------------------
-# OPENAI CLIENT
+# SAFE OPENAI CLIENT INIT
 # -----------------------------
 client = None
-if API_KEY:
-    client = OpenAI(api_key=API_KEY)
+if OpenAI and API_KEY:
+    try:
+        client = OpenAI(api_key=API_KEY)
+    except Exception:
+        client = None
 
 
 # -----------------------------
@@ -40,10 +50,7 @@ def log_step(step, action, reward, done, error=None):
 
 def log_end(success, steps, rewards):
     total = sum(rewards)
-
-    # ✅ Better scoring
     score = min(max(total, 0.0), 1.0)
-
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
 
     print(
@@ -63,17 +70,14 @@ def rule_based(obs, history):
     cpu = metrics.get("cpu", 0)
     latency = metrics.get("latency", 0)
 
-    # STOP if healthy
     if obs.get("system_status") == "healthy":
         return {"action_type": "noop", "target": None}
 
-    # EASY
     if task_id == "easy_cache":
         if latency > 180 and "clear_cache" not in history:
             return {"action_type": "clear_cache", "target": None}
         return None
 
-    # MEDIUM
     if task_id == "medium_db":
         if "Database connection failure" in alerts and "fix_db_connection" not in history:
             return {"action_type": "fix_db_connection", "target": None}
@@ -81,7 +85,6 @@ def rule_based(obs, history):
             return {"action_type": "clear_cache", "target": None}
         return None
 
-    # HARD
     if task_id == "hard_outage":
         if "Database connection failure" in alerts and "fix_db_connection" not in history:
             return {"action_type": "fix_db_connection", "target": None}
@@ -99,8 +102,8 @@ def rule_based(obs, history):
 # -----------------------------
 def safe_fallback(obs, history):
     alerts = obs.get("alerts", [])
-    cpu = obs["metrics"]["cpu"]
-    latency = obs["metrics"]["latency"]
+    cpu = obs.get("metrics", {}).get("cpu", 0)
+    latency = obs.get("metrics", {}).get("latency", 0)
 
     if "Database connection failure" in alerts:
         return {"action_type": "fix_db_connection", "target": None}
@@ -115,7 +118,7 @@ def safe_fallback(obs, history):
 
 
 # -----------------------------
-# LLM FALLBACK
+# LLM FALLBACK (SAFE)
 # -----------------------------
 def llm_action(obs):
     if not client:
@@ -129,9 +132,9 @@ def llm_action(obs):
                 {
                     "role": "user",
                     "content": f"""
-Logs: {obs['logs']}
-Metrics: {obs['metrics']}
-Alerts: {obs['alerts']}
+Logs: {obs.get('logs')}
+Metrics: {obs.get('metrics')}
+Alerts: {obs.get('alerts')}
 
 Choose ONE action:
 clear_cache, fix_db_connection, scale_service, restart_service, noop
@@ -153,7 +156,7 @@ clear_cache, fix_db_connection, scale_service, restart_service, noop
             return {"action_type": "restart_service", "target": "backend"}
 
     except Exception:
-        pass
+        return None
 
     return None
 
@@ -174,7 +177,7 @@ def choose_action(obs, history):
 
 
 # -----------------------------
-# RUN TASK
+# RUN TASK (SAFE)
 # -----------------------------
 def run_task(task_id):
     log_start(task_id)
@@ -185,11 +188,17 @@ def run_task(task_id):
     steps_taken = 0
 
     try:
-        res = requests.post(f"{API_BASE_URL}/reset", json={"task_id": task_id})
-        data = res.json()
+        try:
+            res = requests.post(f"{API_BASE_URL}/reset", json={"task_id": task_id}, timeout=10)
+            res.raise_for_status()
+            data = res.json()
+        except Exception as e:
+            log_step(0, {"error": str(e)}, 0.0, True, error=str(e))
+            log_end(False, 0, [])
+            return
 
-        obs = data["observation"]
-        done = data["done"]
+        obs = data.get("observation", {})
+        done = data.get("done", False)
 
         for step in range(1, MAX_STEPS + 1):
             if done:
@@ -197,12 +206,17 @@ def run_task(task_id):
 
             action = choose_action(obs, history)
 
-            res = requests.post(f"{API_BASE_URL}/step", json=action)
-            data = res.json()
+            try:
+                res = requests.post(f"{API_BASE_URL}/step", json=action, timeout=10)
+                res.raise_for_status()
+                data = res.json()
+            except Exception as e:
+                log_step(step, {"error": str(e)}, 0.0, True, error=str(e))
+                break
 
-            obs = data["observation"]
-            reward = round(data["reward"]["value"], 2)
-            done = data["done"]
+            obs = data.get("observation", {})
+            reward = round(data.get("reward", {}).get("value", 0.0), 2)
+            done = data.get("done", False)
 
             rewards.append(reward)
             history.append(action["action_type"])
