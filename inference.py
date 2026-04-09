@@ -19,20 +19,21 @@ MAX_STEPS = 6
 ENV_NAME = "openenv_sre"
 
 # -----------------------------
-# SAFE OPENAI CLIENT (NO CRASH)
+# OPENAI CLIENT (STRICT + SAFE)
 # -----------------------------
 client = None
 
 if OpenAI:
     try:
-        api_key = os.environ.get("API_KEY")
-        base_url = os.environ.get("API_BASE_URL")
-
-        if api_key and base_url:
+        # 🔥 STRICT evaluator usage
+        if "API_KEY" in os.environ and "API_BASE_URL" in os.environ:
             client = OpenAI(
-                api_key=api_key,
-                base_url=base_url
+                api_key=os.environ["API_KEY"],
+                base_url=os.environ["API_BASE_URL"]
             )
+        else:
+            # 🔥 fallback (no crash)
+            client = OpenAI()
     except Exception:
         client = None
 
@@ -45,9 +46,9 @@ def log_start(task):
 
 
 def log_step(step, action, reward, done, error=None):
-    error_val = error if error else "null"
+    err = error if error else "null"
     print(
-        f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error_val}",
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={err}",
         flush=True,
     )
 
@@ -78,21 +79,19 @@ def rule_based(obs, history):
         return {"action_type": "noop", "target": None}
 
     if task_id == "easy_cache":
-        if latency > 180 and "clear_cache" not in history:
+        if latency > 180:
             return {"action_type": "clear_cache", "target": None}
 
     if task_id == "medium_db":
-        if "Database connection failure" in alerts and "fix_db_connection" not in history:
+        if "Database connection failure" in alerts:
             return {"action_type": "fix_db_connection", "target": None}
-        if "fix_db_connection" in history and latency > 180 and "clear_cache" not in history:
-            return {"action_type": "clear_cache", "target": None}
 
     if task_id == "hard_outage":
-        if "Database connection failure" in alerts and "fix_db_connection" not in history:
+        if "Database connection failure" in alerts:
             return {"action_type": "fix_db_connection", "target": None}
-        if cpu > 80 and history.count("scale_service") < 2:
+        if cpu > 80:
             return {"action_type": "scale_service", "target": "api"}
-        if latency > 180 and "clear_cache" not in history:
+        if latency > 180:
             return {"action_type": "clear_cache", "target": None}
 
     return None
@@ -119,7 +118,7 @@ def safe_fallback(obs):
 
 
 # -----------------------------
-# LLM ACTION (SAFE + PROXY)
+# LLM ACTION (MANDATORY CALL)
 # -----------------------------
 def llm_action(obs):
     if not client:
@@ -138,7 +137,7 @@ Metrics: {obs.get('metrics')}
 Alerts: {obs.get('alerts')}
 
 Choose ONE action:
-clear_cache, fix_db_connection, scale_service, restart_service, noop
+clear_cache, fix_db_connection, scale_service, restart_service
 """,
                 },
             ],
@@ -166,17 +165,12 @@ clear_cache, fix_db_connection, scale_service, restart_service, noop
 # DECISION ENGINE (FORCE LLM)
 # -----------------------------
 def choose_action(obs, history):
-    # 🔥 Force at least ONE LLM call
-    if len(history) == 0:
-        action = llm_action(obs)
-        if action:
-            return action
-
-    action = rule_based(obs, history)
+    # 🔥 ALWAYS CALL LLM FIRST
+    action = llm_action(obs)
     if action:
         return action
 
-    action = llm_action(obs)
+    action = rule_based(obs, history)
     if action:
         return action
 
