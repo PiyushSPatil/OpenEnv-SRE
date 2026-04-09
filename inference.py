@@ -10,34 +10,30 @@ except Exception:
     OpenAI = None
 
 # -----------------------------
-# CONFIG (VERY IMPORTANT)
+# CONFIG
 # -----------------------------
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
-
-LLM_BASE_URL = os.getenv("API_BASE_URL")   # 🔥 PROVIDED BY EVALUATOR
-LLM_API_KEY = os.getenv("API_KEY")         # 🔥 PROVIDED BY EVALUATOR
-
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 
 MAX_STEPS = 6
 ENV_NAME = "openenv_sre"
 
 # -----------------------------
-# OPENAI CLIENT (PROXY ENABLED)
+# OPENAI CLIENT (MANDATORY FORMAT)
 # -----------------------------
 client = None
-if OpenAI and LLM_BASE_URL and LLM_API_KEY:
+if OpenAI:
     try:
         client = OpenAI(
-            api_key=LLM_API_KEY,
-            base_url=LLM_BASE_URL
+            api_key=os.environ["API_KEY"], # 🔥 REQUIRED
+            base_url=os.environ["API_BASE_URL"] # 🔥 REQUIRED
         )
     except Exception:
         client = None
 
 
 # -----------------------------
-# LOGGING (STRICT FORMAT)
+# LOGGING
 # -----------------------------
 def log_start(task):
     print(f"[START] task={task} env={ENV_NAME} model={MODEL_NAME}", flush=True)
@@ -162,10 +158,10 @@ clear_cache, fix_db_connection, scale_service, restart_service, noop
 
 
 # -----------------------------
-# DECISION ENGINE (FORCES LLM)
+# DECISION ENGINE (FORCE LLM)
 # -----------------------------
 def choose_action(obs, history):
-    # 🔥 FORCE at least one LLM call
+    # 🔥 FORCE first-step LLM call
     if len(history) == 0:
         action = llm_action(obs)
         if action:
