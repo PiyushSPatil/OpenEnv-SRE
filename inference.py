@@ -4,10 +4,7 @@ import requests
 # -----------------------------
 # SAFE OPENAI IMPORT
 # -----------------------------
-try:
-    from openai import OpenAI
-except Exception:
-    OpenAI = None
+from openai import OpenAI
 
 # -----------------------------
 # CONFIG
@@ -21,13 +18,26 @@ ENV_NAME = "openenv_sre"
 # -----------------------------
 # OPENAI CLIENT (STRICT + SAFE)
 # -----------------------------
-# -----------------------------
-# OPENAI CLIENT (STRICT - NO FALLBACK)
-# -----------------------------
-client = OpenAI(
-    api_key=os.environ["API_KEY"],
-    base_url=os.environ["API_BASE_URL"]
-)
+client = None
+
+try:
+    api_key = os.environ.get("API_KEY")
+    base_url = os.environ.get("API_BASE_URL")
+
+    if api_key and base_url:
+        client = OpenAI(
+            api_key=api_key,
+            base_url=base_url
+        )
+        print("[INFO] Using LiteLLM proxy", flush=True)
+    else:
+        print("[ERROR] Missing API_KEY or API_BASE_URL", flush=True)
+
+except Exception as e:
+    print(f"[CLIENT INIT ERROR] {e}", flush=True)
+    client = None
+
+
 # -----------------------------
 # LOGGING
 # -----------------------------
@@ -68,13 +78,11 @@ def rule_based(obs, history):
     if obs.get("system_status") == "healthy":
         return {"action_type": "noop", "target": None}
 
-    if task_id == "easy_cache":
-        if latency > 180:
-            return {"action_type": "clear_cache", "target": None}
+    if task_id == "easy_cache" and latency > 180:
+        return {"action_type": "clear_cache", "target": None}
 
-    if task_id == "medium_db":
-        if "Database connection failure" in alerts:
-            return {"action_type": "fix_db_connection", "target": None}
+    if task_id == "medium_db" and "Database connection failure" in alerts:
+        return {"action_type": "fix_db_connection", "target": None}
 
     if task_id == "hard_outage":
         if "Database connection failure" in alerts:
@@ -98,10 +106,10 @@ def safe_fallback(obs):
     if "Database connection failure" in alerts:
         return {"action_type": "fix_db_connection", "target": None}
 
-    if cpu > 85:
+    if cpu > 75:
         return {"action_type": "scale_service", "target": "api"}
 
-    if latency > 300:
+    if latency > 150:
         return {"action_type": "clear_cache", "target": None}
 
     return {"action_type": "restart_service", "target": "backend"}
@@ -111,47 +119,62 @@ def safe_fallback(obs):
 # LLM ACTION (MANDATORY CALL)
 # -----------------------------
 def llm_action(obs):
+    if client is None:
+        print("[LLM ERROR] Client not initialized", flush=True)
+        return None
+
     try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": "You are an expert SRE engineer."},
-                {
-                    "role": "user",
-                    "content": f"""
+        prompt = f"""
+You are an expert Site Reliability Engineer (SRE).
+
+Your goal is to FIX the system and make it HEALTHY.
+
 Logs: {obs.get('logs')}
 Metrics: {obs.get('metrics')}
 Alerts: {obs.get('alerts')}
 
-Choose ONE action:
+Rules:
+- If database error → fix_db_connection
+- If CPU > 80 → scale_service
+- If latency > 180 → clear_cache
+- Otherwise → restart_service
+
+Respond with ONLY one action:
 clear_cache, fix_db_connection, scale_service, restart_service
-""",
-                },
+"""
+
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "You are an expert SRE engineer."},
+                {"role": "user", "content": prompt},
             ],
             temperature=0,
         )
 
-        text = (response.choices[0].message.content or "").lower()
+        text = (response.choices[0].message.content or "").strip().lower()
+        print(f"[LLM RESPONSE] {text}", flush=True)
 
-        if "fix_db" in text:
+        if "fix_db_connection" in text:
             return {"action_type": "fix_db_connection", "target": None}
-        if "scale" in text:
+        elif "scale_service" in text:
             return {"action_type": "scale_service", "target": "api"}
-        if "clear_cache" in text:
+        elif "clear_cache" in text:
             return {"action_type": "clear_cache", "target": None}
-        if "restart" in text:
+        elif "restart_service" in text:
             return {"action_type": "restart_service", "target": "backend"}
 
     except Exception as e:
         print(f"[LLM ERROR] {e}", flush=True)
 
     return None
+
+
 # -----------------------------
-# DECISION ENGINE (FORCE LLM)
+# DECISION ENGINE
 # -----------------------------
 def choose_action(obs, history):
-    # 🔥 ALWAYS CALL LLM FIRST
-    action = llm_action(obs)
+    action = llm_action(obs)  # ALWAYS CALL
     if action:
         return action
 
@@ -206,9 +229,6 @@ def run_task(task_id):
             if obs.get("system_status") == "healthy":
                 success = True
                 break
-
-        if obs.get("system_status") == "healthy":
-            success = True
 
     except Exception as e:
         log_step(0, {"error": str(e)}, 0.0, True, error=str(e))
