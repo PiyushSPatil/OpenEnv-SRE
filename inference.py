@@ -13,7 +13,7 @@ except Exception:
 # CONFIG
 # -----------------------------
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
+MODEL_NAME = "gpt-4o-mini"
 
 MAX_STEPS = 6
 ENV_NAME = "openenv_sre"
@@ -21,23 +21,13 @@ ENV_NAME = "openenv_sre"
 # -----------------------------
 # OPENAI CLIENT (STRICT + SAFE)
 # -----------------------------
-client = None
-
-if OpenAI:
-    try:
-        # 🔥 STRICT evaluator usage
-        if "API_KEY" in os.environ and "API_BASE_URL" in os.environ:
-            client = OpenAI(
-                api_key=os.environ["API_KEY"],
-                base_url=os.environ["API_BASE_URL"]
-            )
-        else:
-            # 🔥 fallback (no crash)
-            client = OpenAI()
-    except Exception:
-        client = None
-
-
+# -----------------------------
+# OPENAI CLIENT (STRICT - NO FALLBACK)
+# -----------------------------
+client = OpenAI(
+    api_key=os.environ["API_KEY"],
+    base_url=os.environ["API_BASE_URL"]
+)
 # -----------------------------
 # LOGGING
 # -----------------------------
@@ -121,9 +111,6 @@ def safe_fallback(obs):
 # LLM ACTION (MANDATORY CALL)
 # -----------------------------
 def llm_action(obs):
-    if not client:
-        return None
-
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -155,12 +142,10 @@ clear_cache, fix_db_connection, scale_service, restart_service
         if "restart" in text:
             return {"action_type": "restart_service", "target": "backend"}
 
-    except Exception:
-        return None
+    except Exception as e:
+        print(f"[LLM ERROR] {e}", flush=True)
 
     return None
-
-
 # -----------------------------
 # DECISION ENGINE (FORCE LLM)
 # -----------------------------
