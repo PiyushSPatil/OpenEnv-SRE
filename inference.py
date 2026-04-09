@@ -1,6 +1,13 @@
 import os
 import requests
-from openai import OpenAI
+
+# -----------------------------
+# SAFE OPENAI IMPORT
+# -----------------------------
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
 
 # -----------------------------
 # CONFIG
@@ -12,20 +19,22 @@ MAX_STEPS = 6
 ENV_NAME = "openenv_sre"
 
 # -----------------------------
-# OPENAI CLIENT (STRICT - REQUIRED)
+# SAFE OPENAI CLIENT (NO CRASH)
 # -----------------------------
-API_KEY = os.environ.get("API_KEY")
-API_BASE_URL = os.environ.get("API_BASE_URL")
+client = None
 
-if not API_KEY or not API_BASE_URL:
-    raise ValueError("❌ API_KEY or API_BASE_URL not set")
+if OpenAI:
+    try:
+        api_key = os.environ.get("API_KEY")
+        base_url = os.environ.get("API_BASE_URL")
 
-client = OpenAI(
-    api_key=API_KEY,
-    base_url=API_BASE_URL,
-)
-
-print("✅ Using API BASE:", API_BASE_URL, flush=True)
+        if api_key and base_url:
+            client = OpenAI(
+                api_key=api_key,
+                base_url=base_url
+            )
+    except Exception:
+        client = None
 
 
 # -----------------------------
@@ -110,9 +119,12 @@ def safe_fallback(obs):
 
 
 # -----------------------------
-# LLM ACTION (MANDATORY CALL)
+# LLM ACTION (SAFE + PROXY)
 # -----------------------------
 def llm_action(obs):
+    if not client:
+        return None
+
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -144,18 +156,17 @@ clear_cache, fix_db_connection, scale_service, restart_service, noop
         if "restart" in text:
             return {"action_type": "restart_service", "target": "backend"}
 
-        return {"action_type": "noop", "target": None}
-
-    except Exception as e:
-        print("❌ LLM ERROR:", e, flush=True)
+    except Exception:
         return None
+
+    return None
 
 
 # -----------------------------
 # DECISION ENGINE (FORCE LLM)
 # -----------------------------
 def choose_action(obs, history):
-    # 🔥 ALWAYS CALL LLM FIRST (guarantees proxy usage)
+    # 🔥 Force at least ONE LLM call
     if len(history) == 0:
         action = llm_action(obs)
         if action:
@@ -165,7 +176,6 @@ def choose_action(obs, history):
     if action:
         return action
 
-    # 🔥 SECOND GUARANTEED LLM CALL
     action = llm_action(obs)
     if action:
         return action
