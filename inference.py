@@ -1,13 +1,7 @@
+```python
 import os
 import requests
-
-# -----------------------------
-# SAFE OPENAI IMPORT
-# -----------------------------
-try:
-    from openai import OpenAI
-except Exception:
-    OpenAI = None
+from openai import OpenAI
 
 # -----------------------------
 # CONFIG
@@ -19,17 +13,20 @@ MAX_STEPS = 6
 ENV_NAME = "openenv_sre"
 
 # -----------------------------
-# OPENAI CLIENT (MANDATORY FORMAT)
+# OPENAI CLIENT (STRICT - REQUIRED)
 # -----------------------------
-client = None
-if OpenAI:
-    try:
-        client = OpenAI(
-            api_key=os.environ["API_KEY"], # 🔥 REQUIRED
-            base_url=os.environ["API_BASE_URL"] # 🔥 REQUIRED
-        )
-    except Exception:
-        client = None
+API_KEY = os.environ.get("API_KEY")
+API_BASE_URL = os.environ.get("API_BASE_URL")
+
+if not API_KEY or not API_BASE_URL:
+    raise ValueError("❌ API_KEY or API_BASE_URL not set")
+
+client = OpenAI(
+    api_key=API_KEY,
+    base_url=API_BASE_URL,
+)
+
+print("✅ Using API BASE:", API_BASE_URL, flush=True)
 
 
 # -----------------------------
@@ -114,12 +111,9 @@ def safe_fallback(obs):
 
 
 # -----------------------------
-# LLM ACTION (PROXY CALL)
+# LLM ACTION (MANDATORY CALL)
 # -----------------------------
 def llm_action(obs):
-    if not client:
-        return None
-
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -151,17 +145,18 @@ clear_cache, fix_db_connection, scale_service, restart_service, noop
         if "restart" in text:
             return {"action_type": "restart_service", "target": "backend"}
 
-    except Exception:
-        return None
+        return {"action_type": "noop", "target": None}
 
-    return None
+    except Exception as e:
+        print("❌ LLM ERROR:", e, flush=True)
+        return None
 
 
 # -----------------------------
 # DECISION ENGINE (FORCE LLM)
 # -----------------------------
 def choose_action(obs, history):
-    # 🔥 FORCE first-step LLM call
+    # 🔥 ALWAYS CALL LLM FIRST (guarantees proxy usage)
     if len(history) == 0:
         action = llm_action(obs)
         if action:
@@ -171,6 +166,7 @@ def choose_action(obs, history):
     if action:
         return action
 
+    # 🔥 SECOND GUARANTEED LLM CALL
     action = llm_action(obs)
     if action:
         return action
