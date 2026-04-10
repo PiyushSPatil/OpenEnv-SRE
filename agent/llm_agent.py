@@ -8,8 +8,8 @@ from .parser import parse_action
 class LLMAgent:
     def __init__(self):
         self.client = OpenAI(
-            base_url=os.getenv("API_BASE_URL_LLM", "https://router.huggingface.co/v1"),
-            api_key=os.getenv("HF_TOKEN"),
+            base_url=os.environ["API_BASE_URL"],
+            api_key=os.environ["API_KEY"],
         )
         self.model = os.getenv("MODEL_NAME", "gpt-4o-mini")
 

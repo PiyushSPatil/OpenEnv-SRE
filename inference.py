@@ -16,35 +16,29 @@ ENV_NAME = "openenv_sre"
 # -----------------------------
 client = None
 
-try:
-    api_key = os.environ["API_KEY"]
-    base_url = os.environ["API_BASE_URL"]
+api_key = os.environ["API_KEY"]
+base_url = os.environ["API_BASE_URL"]
 
-    client = OpenAI(
-        api_key=api_key,
-        base_url=base_url
-    )
+client = OpenAI(
+    api_key=api_key,
+    base_url=base_url
+)
 
-    print("[INFO] Using LiteLLM proxy", flush=True)
-
-except Exception as e:
-    print(f"[FATAL] Client init failed: {e}", flush=True)
-    client = None  # Fallback to rule-based
+print("[INFO] Using LiteLLM proxy", flush=True)
 
 # -----------------------------
 # FORCE API CALL (CRITICAL FIX)
 # -----------------------------
-if client:
-    try:
-        test_response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": "ping"}],
-            temperature=0,
-        )
-        print("[INFO] Proxy API call successful", flush=True)
-    except Exception as e:
-        print(f"[FATAL] Proxy call failed: {e}", flush=True)
-        client = None  # Disable LLM if test fails
+try:
+    test_response = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[{"role": "user", "content": "ping"}],
+        temperature=0,
+    )
+    print("[INFO] Proxy API call successful", flush=True)
+except Exception as e:
+    print(f"[FATAL] Proxy call failed: {e}", flush=True)
+    raise e  # Fail if proxy not working
 
 
 # -----------------------------
@@ -129,8 +123,7 @@ def safe_fallback(obs):
 # -----------------------------
 def llm_action(obs):
     if not client:
-        print("[INFO] No LLM client, using fallback", flush=True)
-        return None
+        raise Exception("LLM client not available. API_KEY and API_BASE_URL must be set for hackathon submission.")
 
     try:
         prompt = f"""
@@ -155,7 +148,7 @@ clear_cache, fix_db_connection, scale_service, restart_service
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "You are an SRE expert."},
+                {"role": "system", content": "You are an SRE expert."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0,
@@ -175,22 +168,14 @@ clear_cache, fix_db_connection, scale_service, restart_service
 
     except Exception as e:
         print(f"[LLM ERROR] {e}", flush=True)
-        return None
+        raise e  # Re-raise to fail the submission if LLM fails
 
 
 # -----------------------------
 # DECISION ENGINE
 # -----------------------------
 def choose_action(obs, history):
-    action = llm_action(obs)  # 🔥 ALWAYS CALL LLM
-    if action:
-        return action
-
-    action = rule_based(obs, history)
-    if action:
-        return action
-
-    return safe_fallback(obs)
+    return llm_action(obs)  # 🔥 ALWAYS USE LLM
 
 
 # -----------------------------
