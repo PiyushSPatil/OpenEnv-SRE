@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+import os
+from openai import OpenAI
 
 from env.environment import SREEnvironment
 from env.models import Action
@@ -25,6 +27,14 @@ app.add_middleware(
 
 env = SREEnvironment()
 
+# -----------------------------
+# LLM CLIENT FOR AGENT
+# -----------------------------
+api_key = os.environ["API_KEY"]
+base_url = os.environ["API_BASE_URL"]
+client = OpenAI(api_key=api_key, base_url=base_url)
+model_name = "gpt-4o-mini"
+
 
 # -----------------------------
 # REQUEST MODELS
@@ -36,6 +46,10 @@ class ResetRequest(BaseModel):
 class StepRequest(BaseModel):
     action_type: str
     target: Optional[str] = None
+
+
+class AgentRunRequest(BaseModel):
+    observation: dict
 
 
 # -----------------------------
@@ -93,6 +107,59 @@ def step(request: StepRequest):
             "done": done,
             "info": info
         }
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# -----------------------------
+# AGENT RUN
+# -----------------------------
+@app.post("/agent/run")
+def agent_run(request: AgentRunRequest):
+    try:
+        obs = request.observation
+
+        prompt = f"""
+You are an expert Site Reliability Engineer (SRE).
+
+Fix the system and make it healthy.
+
+Logs: {obs.get('logs')}
+Metrics: {obs.get('metrics')}
+Alerts: {obs.get('alerts')}
+
+Rules:
+- Database error → fix_db_connection
+- CPU > 80 → scale_service
+- Latency > 180 → clear_cache
+- Otherwise → restart_service
+
+Respond ONLY with:
+clear_cache, fix_db_connection, scale_service, restart_service
+"""
+
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": "You are an SRE expert."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0,
+        )
+
+        text = (response.choices[0].message.content or "").strip().lower()
+
+        if "fix_db_connection" in text:
+            action = {"action_type": "fix_db_connection", "target": None}
+        elif "scale_service" in text:
+            action = {"action_type": "scale_service", "target": "api"}
+        elif "clear_cache" in text:
+            action = {"action_type": "clear_cache", "target": None}
+        else:
+            action = {"action_type": "restart_service", "target": "backend"}
+
+        return {"action": action}
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
