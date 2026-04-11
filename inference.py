@@ -5,7 +5,7 @@ from openai import OpenAI
 # -----------------------------
 # CONFIG (STRICT)
 # -----------------------------
-MODEL_NAME = os.environ["MODEL_NAME"]  # ❗ NO DEFAULT
+MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4o-mini" 
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 
 MAX_STEPS = 6
