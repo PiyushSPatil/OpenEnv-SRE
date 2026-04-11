@@ -11,38 +11,30 @@ ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 MAX_STEPS = 6
 ENV_NAME = "openenv_sre"
 
+# -----------------------------
+# 🔥 STRICT CLIENT (MANDATORY)
+# -----------------------------
+client = None
+try:
+    client = OpenAI(
+        api_key=os.environ["API_KEY"],
+        base_url=os.environ["API_BASE_URL"]
+    )
+except Exception as e:
+    print(f"[ERROR] Client init failed: {e}", flush=True)
 
 # -----------------------------
-# SAFE CLIENT INIT
+# 🔥 FORCE PROXY CALL (CRITICAL)
 # -----------------------------
-def init_client():
-    try:
-        api_key = os.environ.get("API_KEY")
-        base_url = os.environ.get("API_BASE_URL")
-
-        if not api_key or not base_url:
-            return None
-
-        return OpenAI(api_key=api_key, base_url=base_url)
-    except:
-        return None
-
-
-# -----------------------------
-# FORCE PROXY CALL
-# -----------------------------
-def force_proxy_call(client):
-    if not client:
-        return
-
+if client:
     try:
         client.chat.completions.create(
             model=MODEL_NAME,
             messages=[{"role": "user", "content": "ping"}],
             temperature=0,
         )
-    except:
-        pass
+    except Exception as e:
+        print(f"[ERROR] Proxy test failed: {e}", flush=True)
 
 
 # -----------------------------
@@ -65,18 +57,17 @@ def log_end(success, steps, rewards):
 
 
 # -----------------------------
-# LLM ACTION (SAFE + REQUIRED)
+# 🔥 LLM ACTION (ALWAYS CALL)
 # -----------------------------
-def llm_action(client, obs):
-    if client:
-        try:
-            response = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": "You are an SRE expert."},
-                    {
-                        "role": "user",
-                        "content": f"""
+def llm_action(obs):
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "You are an SRE expert."},
+                {
+                    "role": "user",
+                    "content": f"""
 Logs: {obs.get('logs')}
 Metrics: {obs.get('metrics')}
 Alerts: {obs.get('alerts')}
@@ -84,31 +75,31 @@ Alerts: {obs.get('alerts')}
 Return ONE:
 clear_cache, fix_db_connection, scale_service, restart_service
 """
-                    }
-                ],
-                temperature=0,
-            )
+                }
+            ],
+            temperature=0,
+        )
 
-            text = (response.choices[0].message.content or "").lower()
+        text = (response.choices[0].message.content or "").lower()
 
-            if "fix_db" in text:
-                return {"action_type": "fix_db_connection", "target": None}
-            if "scale" in text:
-                return {"action_type": "scale_service", "target": "api"}
-            if "clear_cache" in text:
-                return {"action_type": "clear_cache", "target": None}
+        if "fix_db" in text:
+            return {"action_type": "fix_db_connection", "target": None}
+        if "scale" in text:
+            return {"action_type": "scale_service", "target": "api"}
+        if "clear_cache" in text:
+            return {"action_type": "clear_cache", "target": None}
 
-        except:
-            pass
+        return {"action_type": "restart_service", "target": "backend"}
 
-    # ✅ fallback (no crash, still runs)
-    return {"action_type": "restart_service", "target": "backend"}
+    except Exception as e:
+        # ❗ fallback ONLY AFTER ATTEMPT
+        return {"action_type": "restart_service", "target": "backend"}
 
 
 # -----------------------------
 # RUN TASK
 # -----------------------------
-def run_task(client, task_id):
+def run_task(task_id):
     log_start(task_id)
 
     rewards = []
@@ -126,8 +117,8 @@ def run_task(client, task_id):
             if done:
                 break
 
-            # 🔥 ALWAYS call LLM (proxy if available)
-            action = llm_action(client, obs)
+            # 🔥 ALWAYS CALL LLM (NO SKIP)
+            action = llm_action(obs)
 
             try:
                 res = requests.post(f"{ENV_BASE_URL}/step", json=action, timeout=10)
@@ -162,14 +153,8 @@ def run_task(client, task_id):
 # MAIN
 # -----------------------------
 def main():
-    client = init_client()
-
-    # 🔥 try proxy (doesn't crash)
-    force_proxy_call(client)
-
-    # ❗ ALWAYS run tasks (NO early return)
     for task in ["easy_cache", "medium_db", "hard_outage"]:
-        run_task(client, task)
+        run_task(task)
 
 
 if __name__ == "__main__":
