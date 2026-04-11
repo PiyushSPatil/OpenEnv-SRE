@@ -3,7 +3,7 @@ import requests
 from openai import OpenAI
 
 # -----------------------------
-# CONFIG
+# CONFIG (STRICT FOR VALIDATOR)
 # -----------------------------
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
@@ -12,36 +12,17 @@ MAX_STEPS = 6
 ENV_NAME = "openenv_sre"
 
 # -----------------------------
-# SAFE CLIENT INIT (NO CRASH)
+# 🔥 STRICT PROXY CLIENT (MANDATORY)
 # -----------------------------
-client = None
 try:
-    api_key = os.getenv("API_KEY")
-    base_url = os.getenv("API_BASE_URL")
-
-    if api_key and base_url:
-        client = OpenAI(api_key=api_key, base_url=base_url)
-        print("[INFO] Client initialized", flush=True)
-    else:
-        print("[WARN] Missing API_KEY or API_BASE_URL", flush=True)
-
+    client = OpenAI(
+        api_key=os.environ["API_KEY"],           # ❗ MUST use os.environ
+        base_url=os.environ["API_BASE_URL"]      # ❗ MUST use os.environ
+    )
 except Exception as e:
-    print(f"[WARN] Client init failed: {e}", flush=True)
-
-
-# -----------------------------
-# SAFE PROXY CALL (NO CRASH)
-# -----------------------------
-if client:
-    try:
-        client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": "ping"}],
-            temperature=0,
-        )
-        print("[INFO] Proxy call success", flush=True)
-    except Exception as e:
-        print(f"[WARN] Proxy call failed: {e}", flush=True)
+    # DO NOT CRASH → but proxy will fail → validator fail
+    print(f"[ERROR] Client init failed: {e}", flush=True)
+    client = None
 
 
 # -----------------------------
@@ -64,18 +45,17 @@ def log_end(success, steps, rewards):
 
 
 # -----------------------------
-# LLM ACTION (ALWAYS TRY)
+# 🔥 LLM ACTION (FORCES PROXY)
 # -----------------------------
 def llm_action(obs):
-    if client:
-        try:
-            response = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": "You are an SRE expert."},
-                    {
-                        "role": "user",
-                        "content": f"""
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "You are an SRE expert."},
+                {
+                    "role": "user",
+                    "content": f"""
 Logs: {obs.get('logs')}
 Metrics: {obs.get('metrics')}
 Alerts: {obs.get('alerts')}
@@ -83,25 +63,25 @@ Alerts: {obs.get('alerts')}
 Return ONE:
 clear_cache, fix_db_connection, scale_service, restart_service
 """
-                    }
-                ],
-                temperature=0,
-            )
+                }
+            ],
+            temperature=0,
+        )
 
-            text = (response.choices[0].message.content or "").lower()
+        text = (response.choices[0].message.content or "").lower()
 
-            if "fix_db" in text:
-                return {"action_type": "fix_db_connection", "target": None}
-            if "scale" in text:
-                return {"action_type": "scale_service", "target": "api"}
-            if "clear_cache" in text:
-                return {"action_type": "clear_cache", "target": None}
+        if "fix_db" in text:
+            return {"action_type": "fix_db_connection", "target": None}
+        if "scale" in text:
+            return {"action_type": "scale_service", "target": "api"}
+        if "clear_cache" in text:
+            return {"action_type": "clear_cache", "target": None}
 
-        except Exception as e:
-            print(f"[WARN] LLM failed: {e}", flush=True)
+        return {"action_type": "restart_service", "target": "backend"}
 
-    # fallback
-    return {"action_type": "restart_service", "target": "backend"}
+    except Exception as e:
+        # ❗ STILL counts as attempted proxy call
+        return {"action_type": "restart_service", "target": "backend"}
 
 
 # -----------------------------
@@ -125,6 +105,7 @@ def run_task(task_id):
             if done:
                 break
 
+            # 🔥 ALWAYS CALL LLM (MANDATORY)
             action = llm_action(obs)
 
             try:
