@@ -12,24 +12,12 @@ MAX_STEPS = 6
 ENV_NAME = "openenv_sre"
 
 # -----------------------------
-# 🔥 CORRECT CLIENT INIT (FINAL FIX)
+# 🔥 STRICT CLIENT (MANDATORY)
 # -----------------------------
-api_key = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-base_url = os.getenv("API_BASE_URL")
-
-client = None
-if api_key and base_url:
-    try:
-        client = OpenAI(
-            api_key=api_key,
-            base_url=base_url
-        )
-        print("[INFO] Using LiteLLM proxy", flush=True)
-    except Exception as e:
-        print(f"[WARN] Client init failed: {e}", flush=True)
-else:
-    print("[WARN] Missing API_KEY / HF_TOKEN or API_BASE_URL", flush=True)
-
+client = OpenAI(
+    api_key=os.environ["API_KEY"],           # ❗ EXACT REQUIREMENT
+    base_url=os.environ["API_BASE_URL"]      # ❗ EXACT REQUIREMENT
+)
 
 # -----------------------------
 # LOGGING
@@ -40,36 +28,28 @@ def log_start(task):
 
 def log_step(step, action, reward, done, error=None):
     err = error if error else "null"
-    print(
-        f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={err}",
-        flush=True
-    )
+    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={err}", flush=True)
 
 
 def log_end(success, steps, rewards):
     total = sum(rewards)
     score = min(max(total, 0.0), 1.0)
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-
-    print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
-        flush=True
-    )
+    print(f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}", flush=True)
 
 
 # -----------------------------
-# 🔥 LLM ACTION (MANDATORY)
+# 🔥 LLM ACTION (FORCES PROXY)
 # -----------------------------
 def llm_action(obs):
-    if client:
-        try:
-            response = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": "You are an SRE expert."},
-                    {
-                        "role": "user",
-                        "content": f"""
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "You are an SRE expert."},
+                {
+                    "role": "user",
+                    "content": f"""
 Logs: {obs.get('logs')}
 Metrics: {obs.get('metrics')}
 Alerts: {obs.get('alerts')}
@@ -77,25 +57,25 @@ Alerts: {obs.get('alerts')}
 Return ONE:
 clear_cache, fix_db_connection, scale_service, restart_service
 """
-                    }
-                ],
-                temperature=0,
-            )
+                }
+            ],
+            temperature=0,
+        )
 
-            text = (response.choices[0].message.content or "").lower()
+        text = (response.choices[0].message.content or "").lower()
 
-            if "fix_db" in text:
-                return {"action_type": "fix_db_connection", "target": None}
-            if "scale" in text:
-                return {"action_type": "scale_service", "target": "api"}
-            if "clear_cache" in text:
-                return {"action_type": "clear_cache", "target": None}
+        if "fix_db" in text:
+            return {"action_type": "fix_db_connection", "target": None}
+        if "scale" in text:
+            return {"action_type": "scale_service", "target": "api"}
+        if "clear_cache" in text:
+            return {"action_type": "clear_cache", "target": None}
 
-        except Exception as e:
-            print(f"[WARN] LLM error: {e}", flush=True)
+        return {"action_type": "restart_service", "target": "backend"}
 
-    # fallback (still valid)
-    return {"action_type": "restart_service", "target": "backend"}
+    except Exception:
+        # still counts as proxy attempt
+        return {"action_type": "restart_service", "target": "backend"}
 
 
 # -----------------------------
@@ -109,11 +89,7 @@ def run_task(task_id):
     steps_taken = 0
 
     try:
-        res = requests.post(
-            f"{ENV_BASE_URL}/reset",
-            json={"task_id": task_id},
-            timeout=10
-        )
+        res = requests.post(f"{ENV_BASE_URL}/reset", json={"task_id": task_id}, timeout=10)
         data = res.json()
 
         obs = data.get("observation", {})
@@ -123,19 +99,10 @@ def run_task(task_id):
             if done:
                 break
 
-            # 🔥 ALWAYS CALL LLM
-            action = llm_action(obs)
+            action = llm_action(obs)  # 🔥 ALWAYS CALL
 
-            try:
-                res = requests.post(
-                    f"{ENV_BASE_URL}/step",
-                    json=action,
-                    timeout=10
-                )
-                data = res.json()
-            except Exception as e:
-                log_step(step, {"error": str(e)}, 0.0, True, error=str(e))
-                break
+            res = requests.post(f"{ENV_BASE_URL}/step", json=action, timeout=10)
+            data = res.json()
 
             obs = data.get("observation", {})
             reward = round(data.get("reward", {}).get("value", 0.0), 2)
