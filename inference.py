@@ -3,40 +3,45 @@ import requests
 from openai import OpenAI
 
 # -----------------------------
-# CONFIG (STRICT)
+# CONFIG
 # -----------------------------
-MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct" 
+MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 
 MAX_STEPS = 6
 ENV_NAME = "openenv_sre"
 
 # -----------------------------
-# 🔥 STRICT CLIENT INIT
+# SAFE CLIENT INIT (NO CRASH)
 # -----------------------------
+client = None
 try:
-    client = OpenAI(
-        api_key=os.environ["API_KEY"],
-        base_url=os.environ["API_BASE_URL"]
-    )
+    api_key = os.getenv("API_KEY")
+    base_url = os.getenv("API_BASE_URL")
+
+    if api_key and base_url:
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        print("[INFO] Client initialized", flush=True)
+    else:
+        print("[WARN] Missing API_KEY or API_BASE_URL", flush=True)
+
 except Exception as e:
-    print(f"[FATAL] Client init failed: {e}", flush=True)
-    raise e  # ❗ MUST FAIL if client fails
+    print(f"[WARN] Client init failed: {e}", flush=True)
 
 
 # -----------------------------
-# 🔥 FORCE PROXY CALL (MANDATORY)
+# SAFE PROXY CALL (NO CRASH)
 # -----------------------------
-try:
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[{"role": "user", "content": "ping"}],
-        temperature=0,
-    )
-    print("[INFO] Proxy call success", flush=True)
-except Exception as e:
-    print(f"[FATAL] Proxy call failed: {e}", flush=True)
-    raise e  # ❗ MUST FAIL if proxy not working
+if client:
+    try:
+        client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": "ping"}],
+            temperature=0,
+        )
+        print("[INFO] Proxy call success", flush=True)
+    except Exception as e:
+        print(f"[WARN] Proxy call failed: {e}", flush=True)
 
 
 # -----------------------------
@@ -48,61 +53,55 @@ def log_start(task):
 
 def log_step(step, action, reward, done, error=None):
     err = error if error else "null"
-    print(
-        f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={err}",
-        flush=True
-    )
+    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={err}", flush=True)
 
 
 def log_end(success, steps, rewards):
     total = sum(rewards)
     score = min(max(total, 0.0), 1.0)
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-
-    print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
-        flush=True
-    )
+    print(f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}", flush=True)
 
 
 # -----------------------------
-# 🔥 LLM ACTION (ALWAYS CALLED)
+# LLM ACTION (ALWAYS TRY)
 # -----------------------------
 def llm_action(obs):
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": "You are an expert SRE engineer."},
-                {
-                    "role": "user",
-                    "content": f"""
+    if client:
+        try:
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": "You are an SRE expert."},
+                    {
+                        "role": "user",
+                        "content": f"""
 Logs: {obs.get('logs')}
 Metrics: {obs.get('metrics')}
 Alerts: {obs.get('alerts')}
 
-Choose ONE:
+Return ONE:
 clear_cache, fix_db_connection, scale_service, restart_service
 """
-                }
-            ],
-            temperature=0,
-        )
+                    }
+                ],
+                temperature=0,
+            )
 
-        text = (response.choices[0].message.content or "").lower()
+            text = (response.choices[0].message.content or "").lower()
 
-        if "fix_db" in text:
-            return {"action_type": "fix_db_connection", "target": None}
-        if "scale" in text:
-            return {"action_type": "scale_service", "target": "api"}
-        if "clear_cache" in text:
-            return {"action_type": "clear_cache", "target": None}
+            if "fix_db" in text:
+                return {"action_type": "fix_db_connection", "target": None}
+            if "scale" in text:
+                return {"action_type": "scale_service", "target": "api"}
+            if "clear_cache" in text:
+                return {"action_type": "clear_cache", "target": None}
 
-        return {"action_type": "restart_service", "target": "backend"}
+        except Exception as e:
+            print(f"[WARN] LLM failed: {e}", flush=True)
 
-    except Exception as e:
-        # fallback AFTER attempt
-        return {"action_type": "restart_service", "target": "backend"}
+    # fallback
+    return {"action_type": "restart_service", "target": "backend"}
 
 
 # -----------------------------
@@ -116,12 +115,7 @@ def run_task(task_id):
     steps_taken = 0
 
     try:
-        res = requests.post(
-            f"{ENV_BASE_URL}/reset",
-            json={"task_id": task_id},
-            timeout=10
-        )
-        res.raise_for_status()
+        res = requests.post(f"{ENV_BASE_URL}/reset", json={"task_id": task_id}, timeout=10)
         data = res.json()
 
         obs = data.get("observation", {})
@@ -131,16 +125,10 @@ def run_task(task_id):
             if done:
                 break
 
-            # 🔥 ALWAYS CALL LLM
             action = llm_action(obs)
 
             try:
-                res = requests.post(
-                    f"{ENV_BASE_URL}/step",
-                    json=action,
-                    timeout=10
-                )
-                res.raise_for_status()
+                res = requests.post(f"{ENV_BASE_URL}/step", json=action, timeout=10)
                 data = res.json()
             except Exception as e:
                 log_step(step, {"error": str(e)}, 0.0, True, error=str(e))
