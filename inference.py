@@ -3,38 +3,40 @@ import requests
 from openai import OpenAI
 
 # -----------------------------
-# CONFIG
+# CONFIG (STRICT)
 # -----------------------------
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
+MODEL_NAME = os.environ["MODEL_NAME"]  # ❗ NO DEFAULT
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 
 MAX_STEPS = 6
 ENV_NAME = "openenv_sre"
 
 # -----------------------------
-# 🔥 STRICT CLIENT (MANDATORY)
+# 🔥 STRICT CLIENT INIT
 # -----------------------------
-client = None
 try:
     client = OpenAI(
         api_key=os.environ["API_KEY"],
         base_url=os.environ["API_BASE_URL"]
     )
 except Exception as e:
-    print(f"[ERROR] Client init failed: {e}", flush=True)
+    print(f"[FATAL] Client init failed: {e}", flush=True)
+    raise e  # ❗ MUST FAIL if client fails
+
 
 # -----------------------------
-# 🔥 FORCE PROXY CALL (CRITICAL)
+# 🔥 FORCE PROXY CALL (MANDATORY)
 # -----------------------------
-if client:
-    try:
-        client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": "ping"}],
-            temperature=0,
-        )
-    except Exception as e:
-        print(f"[ERROR] Proxy test failed: {e}", flush=True)
+try:
+    response = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[{"role": "user", "content": "ping"}],
+        temperature=0,
+    )
+    print("[INFO] Proxy call success", flush=True)
+except Exception as e:
+    print(f"[FATAL] Proxy call failed: {e}", flush=True)
+    raise e  # ❗ MUST FAIL if proxy not working
 
 
 # -----------------------------
@@ -46,25 +48,32 @@ def log_start(task):
 
 def log_step(step, action, reward, done, error=None):
     err = error if error else "null"
-    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={err}", flush=True)
+    print(
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={err}",
+        flush=True
+    )
 
 
 def log_end(success, steps, rewards):
     total = sum(rewards)
     score = min(max(total, 0.0), 1.0)
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}", flush=True)
+
+    print(
+        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
+        flush=True
+    )
 
 
 # -----------------------------
-# 🔥 LLM ACTION (ALWAYS CALL)
+# 🔥 LLM ACTION (ALWAYS CALLED)
 # -----------------------------
 def llm_action(obs):
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "You are an SRE expert."},
+                {"role": "system", "content": "You are an expert SRE engineer."},
                 {
                     "role": "user",
                     "content": f"""
@@ -72,7 +81,7 @@ Logs: {obs.get('logs')}
 Metrics: {obs.get('metrics')}
 Alerts: {obs.get('alerts')}
 
-Return ONE:
+Choose ONE:
 clear_cache, fix_db_connection, scale_service, restart_service
 """
                 }
@@ -92,7 +101,7 @@ clear_cache, fix_db_connection, scale_service, restart_service
         return {"action_type": "restart_service", "target": "backend"}
 
     except Exception as e:
-        # ❗ fallback ONLY AFTER ATTEMPT
+        # fallback AFTER attempt
         return {"action_type": "restart_service", "target": "backend"}
 
 
@@ -107,7 +116,12 @@ def run_task(task_id):
     steps_taken = 0
 
     try:
-        res = requests.post(f"{ENV_BASE_URL}/reset", json={"task_id": task_id}, timeout=10)
+        res = requests.post(
+            f"{ENV_BASE_URL}/reset",
+            json={"task_id": task_id},
+            timeout=10
+        )
+        res.raise_for_status()
         data = res.json()
 
         obs = data.get("observation", {})
@@ -117,11 +131,16 @@ def run_task(task_id):
             if done:
                 break
 
-            # 🔥 ALWAYS CALL LLM (NO SKIP)
+            # 🔥 ALWAYS CALL LLM
             action = llm_action(obs)
 
             try:
-                res = requests.post(f"{ENV_BASE_URL}/step", json=action, timeout=10)
+                res = requests.post(
+                    f"{ENV_BASE_URL}/step",
+                    json=action,
+                    timeout=10
+                )
+                res.raise_for_status()
                 data = res.json()
             except Exception as e:
                 log_step(step, {"error": str(e)}, 0.0, True, error=str(e))
