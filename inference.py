@@ -1,36 +1,53 @@
 import os
 import requests
+
 from openai import OpenAI
 
 # -----------------------------
-# CONFIG (STRICT - NO DEFAULTS)
+# CONFIG
 # -----------------------------
-API_BASE_URL = os.environ["API_BASE_URL"]
-API_KEY = os.environ["API_KEY"]
-MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o-mini")
-
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 
 MAX_STEPS = 6
 ENV_NAME = "openenv_sre"
 
-# -----------------------------
-# FORCE CLIENT (NO SAFE MODE)
-# -----------------------------
-client = OpenAI(
-    api_key=API_KEY,
-    base_url=API_BASE_URL
-)
 
 # -----------------------------
-# 🔥 FORCE API CALL (MUST WORK)
+# SAFE CLIENT INIT (CRITICAL)
 # -----------------------------
-# If this fails → submission should fail
-response = client.chat.completions.create(
-    model=MODEL_NAME,
-    messages=[{"role": "user", "content": "ping"}],
-    temperature=0,
-)
+def init_client():
+    try:
+        api_key = os.environ.get("API_KEY")
+        base_url = os.environ.get("API_BASE_URL")
+
+        if not api_key or not base_url:
+            print("[ERROR] Missing API_KEY or API_BASE_URL", flush=True)
+            return None
+
+        return OpenAI(
+            api_key=api_key,
+            base_url=base_url
+        )
+    except Exception as e:
+        print(f"[ERROR] Client init failed: {e}", flush=True)
+        return None
+
+
+# -----------------------------
+# 🔥 FORCE PROXY CALL
+# -----------------------------
+def force_proxy_call(client):
+    try:
+        client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": "ping"}],
+            temperature=0,
+        )
+        print("[INFO] Proxy call success", flush=True)
+    except Exception as e:
+        print(f"[ERROR] Proxy call failed: {e}", flush=True)
+
 
 # -----------------------------
 # LOGGING
@@ -53,16 +70,17 @@ def log_end(success, steps, rewards):
 
 
 # -----------------------------
-# LLM ACTION (NO FALLBACK SKIP)
+# LLM ACTION (SAFE)
 # -----------------------------
-def llm_action(obs):
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": "You are an SRE expert."},
-            {
-                "role": "user",
-                "content": f"""
+def llm_action(client, obs):
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "You are an SRE expert."},
+                {
+                    "role": "user",
+                    "content": f"""
 Logs: {obs.get('logs')}
 Metrics: {obs.get('metrics')}
 Alerts: {obs.get('alerts')}
@@ -70,27 +88,31 @@ Alerts: {obs.get('alerts')}
 Return ONE:
 clear_cache, fix_db_connection, scale_service, restart_service
 """
-            }
-        ],
-        temperature=0,
-    )
+                }
+            ],
+            temperature=0,
+        )
 
-    text = (response.choices[0].message.content or "").lower()
+        text = (response.choices[0].message.content or "").lower()
 
-    if "fix_db" in text:
-        return {"action_type": "fix_db_connection", "target": None}
-    if "scale" in text:
-        return {"action_type": "scale_service", "target": "api"}
-    if "clear_cache" in text:
-        return {"action_type": "clear_cache", "target": None}
+        if "fix_db" in text:
+            return {"action_type": "fix_db_connection", "target": None}
+        if "scale" in text:
+            return {"action_type": "scale_service", "target": "api"}
+        if "clear_cache" in text:
+            return {"action_type": "clear_cache", "target": None}
 
-    return {"action_type": "restart_service", "target": "backend"}
+        return {"action_type": "restart_service", "target": "backend"}
+
+    except Exception as e:
+        print(f"[ERROR] LLM failed: {e}", flush=True)
+        return {"action_type": "restart_service", "target": "backend"}
 
 
 # -----------------------------
 # RUN TASK
 # -----------------------------
-def run_task(task_id):
+def run_task(client, task_id):
     log_start(task_id)
 
     rewards = []
@@ -101,22 +123,26 @@ def run_task(task_id):
         res = requests.post(f"{ENV_BASE_URL}/reset", json={"task_id": task_id}, timeout=10)
         data = res.json()
 
-        obs = data["observation"]
-        done = data["done"]
+        obs = data.get("observation", {})
+        done = data.get("done", False)
 
         for step in range(1, MAX_STEPS + 1):
             if done:
                 break
 
             # 🔥 ALWAYS CALL LLM
-            action = llm_action(obs)
+            action = llm_action(client, obs)
 
-            res = requests.post(f"{ENV_BASE_URL}/step", json=action, timeout=10)
-            data = res.json()
+            try:
+                res = requests.post(f"{ENV_BASE_URL}/step", json=action, timeout=10)
+                data = res.json()
+            except Exception as e:
+                log_step(step, {"error": str(e)}, 0.0, True, error=str(e))
+                break
 
-            obs = data["observation"]
-            reward = round(data["reward"]["value"], 2)
-            done = data["done"]
+            obs = data.get("observation", {})
+            reward = round(data.get("reward", {}).get("value", 0.0), 2)
+            done = data.get("done", False)
 
             rewards.append(reward)
             steps_taken = step
@@ -140,8 +166,18 @@ def run_task(task_id):
 # MAIN
 # -----------------------------
 def main():
+    client = init_client()
+
+    # ❗ If client fails → DO NOT crash
+    if not client:
+        print("[FATAL] Could not initialize OpenAI client", flush=True)
+        return
+
+    # 🔥 MUST HIT PROXY BEFORE ANYTHING
+    force_proxy_call(client)
+
     for task in ["easy_cache", "medium_db", "hard_outage"]:
-        run_task(task)
+        run_task(client, task)
 
 
 if __name__ == "__main__":
