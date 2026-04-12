@@ -8,12 +8,13 @@ from openai import OpenAI
 # -----------------------------
 # CONFIG
 # -----------------------------
-API_KEY = os.getenv("API_KEY") or os.getenv("HF_TOKEN")
-API_BASE_URL = os.getenv("API_BASE_URL")
-if not API_KEY or not API_BASE_URL:
+try:
+    API_KEY = os.environ["API_KEY"]
+    API_BASE_URL = os.environ["API_BASE_URL"]
+except KeyError as exc:
     raise RuntimeError(
         "Missing required environment variables: API_KEY and API_BASE_URL."
-    )
+    ) from exc
 
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
