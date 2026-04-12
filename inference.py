@@ -7,9 +7,13 @@ from openai import OpenAI
 from env.environment import SREEnvironment
 from env.models import Action, Observation, Reward
 
-API_KEY = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("HF_TOKEN") or "dummy"
-API_BASE_URL = "https://router.huggingface.co/v1"
-MODEL_NAME = os.environ.get("MODEL_NAME") or os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
+# API_KEY = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("HF_TOKEN") or "dummy"
+# API_BASE_URL = "https://router.huggingface.co/v1"
+# MODEL_NAME = os.environ.get("MODEL_NAME") or os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
+
+API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
+MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 
 # Debug logging  
 print(f"[DEBUG] API_KEY set: {bool(API_KEY)}, length: {len(API_KEY) if API_KEY else 0}", flush=True)
