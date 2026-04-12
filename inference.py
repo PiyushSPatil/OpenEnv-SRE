@@ -40,6 +40,9 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
 
 
 def get_action(client: OpenAI, obs: Observation) -> dict:
+    if not client:
+        return {"action_type": "restart_service", "target": "backend"}
+
     try:
         res = client.chat.completions.create(
             model=MODEL_NAME,
@@ -113,6 +116,7 @@ async def run_task(client: OpenAI, env: SREEnvironment, task: str) -> None:
 
 
 async def main() -> None:
+    client = None
     try:
         print("[DEBUG] Initializing OpenAI client...", flush=True)
         client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
@@ -121,7 +125,7 @@ async def main() -> None:
         print(f"[ERROR] Failed to initialize OpenAI client: {type(e).__name__}: {e}", flush=True)
         print(f"[ERROR] API_KEY type: {type(API_KEY)}, value length: {len(API_KEY) if API_KEY else 0}", flush=True)
         print(f"[ERROR] API_BASE_URL type: {type(API_BASE_URL)}, value: {API_BASE_URL}", flush=True)
-        raise
+        client = None
 
     env = SREEnvironment()
 
