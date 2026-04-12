@@ -1,110 +1,27 @@
 #!/usr/bin/env python3
 import os
 import sys
+import json
+import time
+import requests
 import traceback
 from typing import Dict, Any, Optional
-
-# Add current directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.getcwd())
-
-# Try multiple import paths
-SREEnvironment = None
-Action = None
-Observation = None
-
-try:
-    # Try direct import first
-    from env.environment import SREEnvironment
-    from env.models import Action, Observation
-    print("[INFO] Successfully imported from env.environment", flush=True)
-except ImportError as e:
-    print(f"[WARN] Could not import from env.environment: {e}", flush=True)
-    try:
-        # Try relative import
-        from .env.environment import SREEnvironment
-        from .env.models import Action, Observation
-        print("[INFO] Successfully imported from .env.environment", flush=True)
-    except ImportError as e2:
-        print(f"[WARN] Could not import from .env.environment: {e2}", flush=True)
-        try:
-            # Try direct environment import
-            from environment import SREEnvironment
-            from models import Action, Observation
-            print("[INFO] Successfully imported from current directory", flush=True)
-        except ImportError as e3:
-            print(f"[ERROR] Cannot import environment modules: {e3}", flush=True)
-            print("[ERROR] Make sure the environment files are in the correct location", flush=True)
-            # Don't exit - we'll create mock classes for testing
-            print("[WARN] Creating mock environment for testing", flush=True)
-            
-            # Mock classes for testing (remove in production)
-            class Action:
-                def __init__(self, action_type, target=None):
-                    self.action_type = action_type
-                    self.target = target
-            
-            class Observation:
-                def __init__(self, **kwargs):
-                    self.logs = kwargs.get('logs', [])
-                    self.metrics = kwargs.get('metrics', {})
-                    self.alerts = kwargs.get('alerts', [])
-                    self.system_status = kwargs.get('system_status', 'degraded')
-                    self.step_count = kwargs.get('step_count', 0)
-                    self.max_steps = kwargs.get('max_steps', 10)
-                    self.task_id = kwargs.get('task_id', 'unknown')
-                    self.description = kwargs.get('description', None)
-            
-            class SREEnvironment:
-                def __init__(self):
-                    self.step_num = 0
-                
-                def reset(self, task_id):
-                    self.step_num = 0
-                    return Observation(
-                        logs=["System starting up"],
-                        metrics={"cpu": 75.0, "memory": 80.0, "latency": 200.0},
-                        alerts=["High latency detected"],
-                        system_status="degraded",
-                        step_count=0,
-                        max_steps=10,
-                        task_id=task_id
-                    )
-                
-                def step(self, action):
-                    self.step_num += 1
-                    # Mock success after 3 steps
-                    system_status = "healthy" if self.step_num >= 3 else "degraded"
-                    from unittest.mock import Mock
-                    reward = Mock()
-                    reward.value = 0.33 if self.step_num < 3 else 1.0
-                    return (
-                        Observation(
-                            logs=[f"Step {self.step_num} completed"],
-                            metrics={"cpu": 70.0, "memory": 75.0, "latency": 100.0},
-                            alerts=[] if system_status == "healthy" else ["Still fixing"],
-                            system_status=system_status,
-                            step_count=self.step_num,
-                            max_steps=10,
-                            task_id="test"
-                        ),
-                        reward,
-                        system_status == "healthy",
-                        {"final_score": 1.0 if system_status == "healthy" else 0.5}
-                    )
-                
-                def close(self):
-                    pass
+from openai import OpenAI
 
 # -----------------------------
-# CONFIG - MUST USE PROVIDED PROXY
+# CONFIGURATION
 # -----------------------------
+# LLM Configuration (MUST use proxy)
 HF_TOKEN = os.getenv("HF_TOKEN")
 API_BASE_URL = os.getenv("API_BASE_URL")
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 
+# Environment Configuration (Your HF Space URL)
+ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
+
 MAX_STEPS = 10
 ENV_NAME = "openenv_sre"
+TIMEOUT = 30
 
 # -----------------------------
 # VALIDATE SETUP
@@ -122,115 +39,139 @@ def validate_setup():
         print(f"[ERROR] Missing required environment variables: {', '.join(missing)}", flush=True)
         return False
     
+    # Don't print full token for security
+    token_preview = HF_TOKEN[:10] + "..." if len(HF_TOKEN) > 10 else "***"
     print(f"[INFO] API_BASE_URL: {API_BASE_URL}", flush=True)
     print(f"[INFO] MODEL_NAME: {MODEL_NAME}", flush=True)
-    print(f"[INFO] HF_TOKEN length: {len(HF_TOKEN)} characters", flush=True)
+    print(f"[INFO] ENV_BASE_URL: {ENV_BASE_URL}", flush=True)
+    print(f"[INFO] HF_TOKEN: {token_preview}", flush=True)
     
     return True
 
 # -----------------------------
-# INIT CLIENT
+# INIT OPENAI CLIENT
 # -----------------------------
 client = None
 
 def init_client():
     global client
     try:
-        from openai import OpenAI
         client = OpenAI(
             api_key=HF_TOKEN,
-            base_url=API_BASE_URL
+            base_url=API_BASE_URL,
+            timeout=30.0
         )
-        # Test the connection - this proves we're using the proxy
+        # Test connection to proxy
         client.models.list()
         print("[INFO] OpenAI client initialized successfully and connected to proxy", flush=True)
         return True
-    except ImportError:
-        print("[ERROR] openai package not installed", flush=True)
-        return False
     except Exception as e:
         print(f"[ERROR] Client init failed: {e}", flush=True)
         return False
 
 # -----------------------------
-# LOGGING - EXACT FORMAT
+# LOGGING (EXACT FORMAT)
 # -----------------------------
 def log_start(task):
     print(f"[START] task={task} env={ENV_NAME} model={MODEL_NAME}", flush=True)
 
 def log_step(step, action, reward, done, error=None):
-    err = error if error else "null"
-    # Convert action to string representation safely
-    try:
-        if hasattr(action, 'action_type'):
-            action_str = f'{{"action_type": "{action.action_type}", "target": {action.target}}}'
-        else:
-            action_str = str(action).replace("'", '"')
-    except:
-        action_str = str(action)
+    error_str = error if error else "null"
+    # Ensure action is JSON serializable
+    if isinstance(action, dict):
+        action_str = json.dumps(action)
+    else:
+        action_str = str(action).replace("'", '"')
     
     print(
-        f"[STEP] step={step} action={action_str} reward={reward:.2f} done={str(done).lower()} error={err}",
+        f"[STEP] step={step} action={action_str} reward={reward:.2f} done={str(done).lower()} error={error_str}",
         flush=True
     )
 
-def log_end(success, steps, rewards):
-    total_score = 0.0
-    if rewards:
-        total_score = min(sum(rewards) / len(rewards), 1.0)
+def log_end(success, steps, rewards, score=None):
+    if score is None and rewards:
+        score = min(sum(rewards) / len(rewards), 1.0)
+    elif score is None:
+        score = 0.0
     
     rewards_str = ",".join(f"{r:.2f}" for r in rewards) if rewards else ""
     
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={total_score:.2f} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
         flush=True
     )
 
 # -----------------------------
-# LLM ACTION - MUST CALL PROXY
+# ENVIRONMENT API CALLS
 # -----------------------------
-def get_llm_action(observation, step_num: int, task_id: str):
+def reset_environment(task_id: str) -> Optional[Dict]:
+    """Call reset endpoint on HF Space"""
+    try:
+        response = requests.post(
+            f"{ENV_BASE_URL}/reset",
+            json={"task_id": task_id},
+            timeout=TIMEOUT,
+            headers={"Content-Type": "application/json"}
+        )
+        response.raise_for_status()
+        data = response.json()
+        print(f"[INFO] Reset successful for task: {task_id}", flush=True)
+        return data
+    except requests.exceptions.ConnectionError:
+        print(f"[ERROR] Cannot connect to environment at {ENV_BASE_URL}", flush=True)
+        return None
+    except requests.exceptions.Timeout:
+        print(f"[ERROR] Timeout connecting to environment at {ENV_BASE_URL}", flush=True)
+        return None
+    except Exception as e:
+        print(f"[ERROR] Reset failed: {e}", flush=True)
+        return None
+
+def step_environment(action: Dict) -> Optional[Dict]:
+    """Call step endpoint on HF Space"""
+    try:
+        response = requests.post(
+            f"{ENV_BASE_URL}/step",
+            json=action,
+            timeout=TIMEOUT,
+            headers={"Content-Type": "application/json"}
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print(f"[ERROR] Step failed: {e}", flush=True)
+        return None
+
+# -----------------------------
+# LLM ACTION (MUST USE PROXY)
+# -----------------------------
+def get_llm_action(observation: Dict, step_num: int, task_id: str) -> Dict:
     """Get action from LLM through the proxy"""
     
     if client is None:
-        error_msg = "Client not initialized - cannot make LLM call"
-        print(f"[ERROR] {error_msg}", flush=True)
-        raise RuntimeError(error_msg)
+        raise RuntimeError("OpenAI client not initialized")
     
-    # Safely extract observation data
-    try:
-        if hasattr(observation, 'logs'):
-            logs_text = "\n".join(observation.logs[-5:]) if observation.logs else "No logs"
-        else:
-            logs_text = str(observation.get('logs', 'No logs')) if isinstance(observation, dict) else "No logs"
-        
-        if hasattr(observation, 'metrics'):
-            metrics_text = ", ".join([f"{k}={v:.2f}" for k, v in observation.metrics.items()])
-        else:
-            metrics_text = str(observation.get('metrics', {})) if isinstance(observation, dict) else "No metrics"
-        
-        if hasattr(observation, 'alerts'):
-            alerts_text = ", ".join(observation.alerts) if observation.alerts else "None"
-        else:
-            alerts_text = str(observation.get('alerts', [])) if isinstance(observation, dict) else "None"
-        
-        if hasattr(observation, 'system_status'):
-            system_status = observation.system_status
-        else:
-            system_status = observation.get('system_status', 'unknown') if isinstance(observation, dict) else 'unknown'
-        
-        if hasattr(observation, 'max_steps'):
-            max_steps = observation.max_steps
-        else:
-            max_steps = MAX_STEPS
-            
-    except Exception as e:
-        print(f"[WARN] Could not parse observation: {e}", flush=True)
-        logs_text = "Error parsing logs"
-        metrics_text = "Error parsing metrics"
-        alerts_text = "Error parsing alerts"
-        system_status = "degraded"
-        max_steps = MAX_STEPS
+    # Extract observation data safely
+    logs = observation.get('logs', [])
+    if isinstance(logs, list):
+        logs_text = "\n".join(logs[-5:]) if logs else "No logs"
+    else:
+        logs_text = str(logs)
+    
+    metrics = observation.get('metrics', {})
+    if isinstance(metrics, dict):
+        metrics_text = ", ".join([f"{k}={v}" for k, v in metrics.items()])
+    else:
+        metrics_text = str(metrics)
+    
+    alerts = observation.get('alerts', [])
+    if isinstance(alerts, list):
+        alerts_text = ", ".join(alerts) if alerts else "None"
+    else:
+        alerts_text = str(alerts)
+    
+    system_status = observation.get('system_status', 'unknown')
+    max_steps = observation.get('max_steps', MAX_STEPS)
     
     prompt = f"""You are an SRE expert managing a production system.
 
@@ -247,188 +188,192 @@ Current Metrics:
 Active Alerts:
 {alerts_text}
 
-Based on this information, choose ONE action to resolve the issue:
-- restart_service (target: backend, frontend, or database)
-- scale_service (target: api, worker, or backend)
-- clear_cache (target: cache or redis)
+Choose ONE action from these options:
+- restart_service (target: backend, frontend, database)
+- scale_service (target: api, worker, backend)
+- clear_cache (target: cache, redis)
 - fix_db_connection (no target needed)
-- noop (do nothing - only if system is healthy)
+- noop (do nothing)
 
-Return ONLY the action in this exact format: action_type target
-Example: restart_service backend
-Example: clear_cache cache
-Example: fix_db_connection
+Return ONLY JSON: {{"action_type": "...", "target": "..."}}
+Example: {{"action_type": "restart_service", "target": "backend"}}
+Example: {{"action_type": "clear_cache", "target": "cache"}}
+Example: {{"action_type": "fix_db_connection", "target": null}}
 
-Choose the most appropriate action:"""
+Action:"""
 
     try:
-        # Make API call through the proxy
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "You are an SRE expert. Return only the action and target, nothing else."},
+                {"role": "system", "content": "You are an SRE expert. Return only valid JSON."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
-            max_tokens=30,
-            timeout=30
+            max_tokens=50
         )
         
         # Parse response
-        text = (response.choices[0].message.content or "").strip().lower()
+        text = response.choices[0].message.content
         print(f"[INFO] LLM response: {text}", flush=True)
         
-        # Parse action from response
-        parts = text.split()
+        # Parse JSON
+        try:
+            # Extract JSON if wrapped in markdown
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0]
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0]
+            
+            action_data = json.loads(text.strip())
+        except json.JSONDecodeError:
+            # Fallback: extract action from text
+            text_lower = text.lower()
+            if "restart" in text_lower:
+                action_data = {"action_type": "restart_service", "target": "backend"}
+            elif "scale" in text_lower:
+                action_data = {"action_type": "scale_service", "target": "api"}
+            elif "clear" in text_lower or "cache" in text_lower:
+                action_data = {"action_type": "clear_cache", "target": "cache"}
+            elif "fix" in text_lower or "db" in text_lower:
+                action_data = {"action_type": "fix_db_connection", "target": None}
+            else:
+                action_data = {"action_type": "restart_service", "target": "backend"}
         
-        if "restart" in text:
-            action_type = "restart_service"
-            target = parts[1] if len(parts) > 1 and parts[1] not in ["restart_service"] else "backend"
-        elif "scale" in text:
-            action_type = "scale_service"
-            target = parts[1] if len(parts) > 1 else "api"
-        elif "clear" in text or "cache" in text:
-            action_type = "clear_cache"
-            target = parts[1] if len(parts) > 1 else "cache"
-        elif "fix_db" in text or "database" in text:
-            action_type = "fix_db_connection"
-            target = None
-        elif "noop" in text:
-            action_type = "noop"
-            target = None
-        else:
-            action_type = "restart_service"
-            target = "backend"
-        
-        # Create and return Action object
-        if Action and Action != type(None):
-            return Action(action_type=action_type, target=target)
-        else:
-            # Return dict if Action class not available
-            return {"action_type": action_type, "target": target}
+        # Ensure required fields
+        if "action_type" not in action_data:
+            action_data["action_type"] = "restart_service"
+        if "target" not in action_data:
+            action_data["target"] = None
+            
+        return action_data
         
     except Exception as e:
-        print(f"[ERROR] LLM call failed at step {step_num}: {e}", flush=True)
-        raise RuntimeError(f"LLM API call failed: {e}")
+        print(f"[ERROR] LLM call failed: {e}", flush=True)
+        raise
 
 # -----------------------------
-# RUN SINGLE TASK
+# RUN TASK
 # -----------------------------
 def run_task(task_id: str):
     """Run a single task episode"""
     log_start(task_id)
     
-    # Create fresh environment
-    try:
-        env = SREEnvironment()
-    except Exception as e:
-        print(f"[ERROR] Failed to create environment: {e}", flush=True)
-        log_end(False, 0, [])
-        return
-    
     rewards = []
     steps_taken = 0
     success = False
-    observation = None
+    final_score = 0.0
+    observation = {}
+    info = {}  # Initialize info to empty dict
     
-    try:
-        # Reset environment with task
-        observation = env.reset(task_id=task_id)
-        done = False
+    # Reset environment
+    reset_data = reset_environment(task_id)
+    if reset_data is None:
+        log_end(False, 0, [], 0.0)
+        return
+    
+    observation = reset_data.get('observation', {})
+    done = reset_data.get('done', False)
+    max_steps = observation.get('max_steps', MAX_STEPS)
+    
+    # Episode loop
+    for step in range(1, max_steps + 1):
+        if done:
+            break
         
-        # Get max steps
-        if hasattr(observation, 'max_steps'):
-            max_steps = observation.max_steps
+        # Get action from LLM (MUST go through proxy)
+        try:
+            action = get_llm_action(observation, step, task_id)
+        except Exception as e:
+            error_msg = f"LLM action failed: {e}"
+            log_step(step, {"action_type": "error"}, 0.0, True, error=error_msg)
+            break
+        
+        # Execute step
+        step_data = step_environment(action)
+        if step_data is None:
+            error_msg = "Environment step failed - no response"
+            log_step(step, action, 0.0, True, error=error_msg)
+            break
+        
+        # Extract data
+        observation = step_data.get('observation', {})
+        reward_dict = step_data.get('reward', {})
+        
+        if isinstance(reward_dict, dict):
+            reward_value = float(reward_dict.get('value', 0.0))
+        elif isinstance(reward_dict, (int, float)):
+            reward_value = float(reward_dict)
         else:
-            max_steps = MAX_STEPS
+            reward_value = 0.0
         
-        for step in range(1, max_steps + 1):
-            if done:
-                break
-            
-            # Get action from LLM
-            try:
-                action = get_llm_action(observation, step, task_id)
-            except Exception as e:
-                error_msg = str(e)
-                log_step(step, {"action_type": "error"}, 0.0, True, error=error_msg)
-                break
-            
-            # Take step in environment
-            try:
-                result = env.step(action)
-                
-                # Handle different return formats
-                if len(result) == 4:
-                    observation, reward, done, info = result
-                elif len(result) == 3:
-                    observation, reward, done = result
-                    info = {}
-                else:
-                    raise ValueError(f"Unexpected step return format: {len(result)} values")
-                
-                # Extract reward value
-                if hasattr(reward, 'value'):
-                    reward_value = reward.value
-                elif isinstance(reward, (int, float)):
-                    reward_value = float(reward)
-                else:
-                    reward_value = 0.0
-                
-            except Exception as e:
-                error_msg = f"Environment step failed: {e}"
-                log_step(step, action, 0.0, True, error=error_msg)
-                break
-            
-            rewards.append(reward_value)
-            steps_taken = step
-            
-            log_step(step, action, reward_value, done)
-            
-            # Check for success
-            if hasattr(observation, 'system_status'):
-                if observation.system_status == "healthy":
-                    success = True
-                    break
-            elif isinstance(observation, dict) and observation.get('system_status') == "healthy":
-                success = True
-                break
+        done = step_data.get('done', False)
+        info = step_data.get('info', {})  # Update info
         
-        # Final check
-        if observation and hasattr(observation, 'system_status') and observation.system_status == "healthy":
+        rewards.append(reward_value)
+        steps_taken = step
+        
+        log_step(step, action, reward_value, done)
+        
+        # Check for success
+        if observation.get('system_status') == 'healthy':
             success = True
-        elif observation and isinstance(observation, dict) and observation.get('system_status') == "healthy":
-            success = True
-        
-    except Exception as e:
-        print(f"[ERROR] Unexpected error in task {task_id}: {e}", flush=True)
-        traceback.print_exc()
-        log_step(0, {"action_type": "error"}, 0.0, True, error=str(e))
+            break
     
-    log_end(success, steps_taken, rewards)
+    # Get final score from info if available
+    if info and 'final_score' in info:
+        final_score = info['final_score']
+    elif rewards:
+        final_score = min(sum(rewards) / len(rewards), 1.0)
     
+    log_end(success, steps_taken, rewards, final_score)
+
+# -----------------------------
+# HEALTH CHECK
+# -----------------------------
+def health_check():
+    """Check if environment is reachable"""
     try:
-        env.close()
+        response = requests.get(f"{ENV_BASE_URL}/health", timeout=5)
+        if response.status_code == 200:
+            print(f"[INFO] Environment health check passed", flush=True)
+            return True
     except:
         pass
+    
+    # Try reset as health check
+    try:
+        response = requests.post(f"{ENV_BASE_URL}/reset", json={"task_id": "easy_cache"}, timeout=5)
+        if response.status_code == 200:
+            print(f"[INFO] Environment responding to reset", flush=True)
+            return True
+    except:
+        pass
+    
+    print(f"[WARN] Cannot reach environment at {ENV_BASE_URL}", flush=True)
+    return False
 
 # -----------------------------
 # MAIN
 # -----------------------------
 def main():
-    print("[INFO] Starting SRE Environment inference", flush=True)
+    print("[INFO] Starting inference script", flush=True)
     
-    # Validate setup first
+    # Validate LLM setup
     if not validate_setup():
-        print("[ERROR] Setup validation failed. Exiting.", flush=True)
+        print("[ERROR] LLM setup validation failed", flush=True)
         sys.exit(1)
     
-    # Initialize client
+    # Initialize LLM client
     if not init_client():
-        print("[ERROR] Client initialization failed. Exiting.", flush=True)
+        print("[ERROR] LLM client initialization failed", flush=True)
+        print("[ERROR] Make sure you have a valid HF_TOKEN", flush=True)
         sys.exit(1)
     
-    # Run all tasks
+    # Check environment health
+    health_check()
+    
+    # Run tasks
     tasks = ["easy_cache", "medium_db", "hard_outage"]
     
     for task in tasks:
@@ -441,11 +386,14 @@ def main():
         except Exception as e:
             print(f"[ERROR] Task {task} failed: {e}", flush=True)
             traceback.print_exc()
+            # Log error end
+            print(f"[END] success=false steps=0 score=0.00 rewards=", flush=True)
         
-        print(f"[INFO] Completed task: {task}\n", flush=True)
+        # Small delay between tasks
+        time.sleep(1)
     
     print("[INFO] All tasks completed", flush=True)
-    sys.exit(0)  # Explicitly exit with success
+    sys.exit(0)
 
 if __name__ == "__main__":
     try:
