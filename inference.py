@@ -7,14 +7,9 @@ from openai import OpenAI
 from env.environment import SREEnvironment
 from env.models import Action, Observation, Reward
 
-API_KEY = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("HF_TOKEN")
+API_KEY = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("HF_TOKEN") or "dummy"
 API_BASE_URL = "https://router.huggingface.co/v1"
 MODEL_NAME = os.environ.get("MODEL_NAME") or os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
-
-if not API_KEY:
-    raise RuntimeError("API_KEY not found in environment (API_KEY or HF_TOKEN)")
-if not API_BASE_URL:
-    raise RuntimeError("API_BASE_URL not found in environment")
 
 # Debug logging  
 print(f"[DEBUG] API_KEY set: {bool(API_KEY)}, length: {len(API_KEY) if API_KEY else 0}", flush=True)
