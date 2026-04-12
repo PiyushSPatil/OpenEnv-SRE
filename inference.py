@@ -59,6 +59,9 @@ def init_client():
 # LLM ACTION
 # -----------------------------
 def get_action(client, obs):
+    if not client:
+        return {"action_type": "restart_service", "target": "backend"}
+
     try:
         res = client.chat.completions.create(
             model=MODEL_NAME,
@@ -152,7 +155,11 @@ async def run_task(client, task):
 # MAIN
 # -----------------------------
 async def main():
-    client = init_client()
+    try:
+        client = init_client()
+    except Exception as e:
+        print(f"[DEBUG] Client init failed: {e}", flush=True)
+        client = None
 
     # 🔥 TRY proxy call (no crash)
     if client:
