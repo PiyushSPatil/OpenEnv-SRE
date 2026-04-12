@@ -49,23 +49,16 @@ def log_end(success, steps, score, rewards):
 # CLIENT INIT
 # -----------------------------
 def init_client():
-    try:
-        return OpenAI(
-            base_url=API_BASE_URL,
-            api_key=API_KEY,
-        )
-    except Exception as e:
-        print(f"[DEBUG] Client init failed: {e}", flush=True)
-        return None
+    return OpenAI(
+        base_url=API_BASE_URL,
+        api_key=API_KEY,
+    )
 
 
 # -----------------------------
 # LLM ACTION
 # -----------------------------
 def get_action(client, obs):
-    if not client:
-        return {"action_type": "restart_service", "target": "backend"}
-
     try:
         res = client.chat.completions.create(
             model=MODEL_NAME,
