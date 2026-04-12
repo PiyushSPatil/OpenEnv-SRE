@@ -16,7 +16,13 @@ MODEL_NAME = os.environ.get("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 
 
 def build_openai_client() -> OpenAI:
-    return OpenAI(api_key=API_KEY, base_url=API_BASE_URL)
+    try:
+        return OpenAI(api_key=API_KEY, base_url=API_BASE_URL)
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize OpenAI client: {type(e).__name__}: {e}", flush=True)
+        print(f"[DEBUG] API_KEY length: {len(API_KEY) if API_KEY else 0}", flush=True)
+        print(f"[DEBUG] API_BASE_URL: {API_BASE_URL}", flush=True)
+        return None
 
 TASKS = ["easy_cache", "medium_db", "hard_outage"]
 BENCHMARK = "openenv_sre"
