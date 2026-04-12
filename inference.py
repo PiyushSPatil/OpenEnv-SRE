@@ -8,7 +8,7 @@ from env.environment import SREEnvironment
 from env.models import Action, Observation, Reward
 
 API_KEY = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("HF_TOKEN")
-API_BASE_URL = os.environ.get("API_BASE_URL") or os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
+API_BASE_URL = "https://router.huggingface.co/v1"
 MODEL_NAME = os.environ.get("MODEL_NAME") or os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 
 if not API_KEY:
@@ -124,6 +124,8 @@ async def main() -> None:
         print("[DEBUG] OpenAI client initialized successfully", flush=True)
     except Exception as e:
         print(f"[ERROR] Failed to initialize OpenAI client: {type(e).__name__}: {e}", flush=True)
+        print(f"[ERROR] API_KEY type: {type(API_KEY)}, value length: {len(API_KEY) if API_KEY else 0}", flush=True)
+        print(f"[ERROR] API_BASE_URL type: {type(API_BASE_URL)}, value: {API_BASE_URL}", flush=True)
         raise
 
     env = SREEnvironment()
