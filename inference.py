@@ -11,6 +11,16 @@ API_KEY = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or os.getenv("
 API_BASE_URL = os.environ.get("API_BASE_URL") or os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.environ.get("MODEL_NAME") or os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 
+if not API_KEY:
+    raise RuntimeError("API_KEY not found in environment (API_KEY or HF_TOKEN)")
+if not API_BASE_URL:
+    raise RuntimeError("API_BASE_URL not found in environment")
+
+# Debug logging  
+print(f"[DEBUG] API_KEY set: {bool(API_KEY)}, length: {len(API_KEY) if API_KEY else 0}", flush=True)
+print(f"[DEBUG] API_BASE_URL: {API_BASE_URL}", flush=True)
+print(f"[DEBUG] MODEL_NAME: {MODEL_NAME}", flush=True)
+
 TASKS = ["easy_cache", "medium_db", "hard_outage"]
 BENCHMARK = "openenv_sre"
 MAX_STEPS = 6
@@ -108,7 +118,13 @@ async def run_task(client: OpenAI, env: SREEnvironment, task: str) -> None:
 
 
 async def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    try:
+        print("[DEBUG] Initializing OpenAI client...", flush=True)
+        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+        print("[DEBUG] OpenAI client initialized successfully", flush=True)
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize OpenAI client: {type(e).__name__}: {e}", flush=True)
+        raise
 
     env = SREEnvironment()
 
