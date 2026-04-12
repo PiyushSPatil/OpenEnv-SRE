@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import os
 from typing import List, Optional
 
@@ -7,12 +8,24 @@ from openai import OpenAI
 from env.environment import SREEnvironment
 from env.models import Action, Observation, Reward
 
-API_KEY = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN")
+API_KEY = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY")
 if not API_KEY:
-    raise RuntimeError("Missing required environment variable API_KEY or HF_TOKEN.")
+    raise RuntimeError("Missing required environment variable API_KEY, HF_TOKEN, or OPENAI_API_KEY.")
 
 API_BASE_URL = os.environ["API_BASE_URL"]
 MODEL_NAME = os.environ.get("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
+
+
+def build_openai_client() -> OpenAI:
+    params = {"api_key": API_KEY}
+    sig = inspect.signature(OpenAI)
+    if "base_url" in sig.parameters:
+        params["base_url"] = API_BASE_URL
+    elif "api_base" in sig.parameters:
+        params["api_base"] = API_BASE_URL
+    else:
+        raise RuntimeError("OpenAI client does not accept base_url or api_base")
+    return OpenAI(**params)
 
 TASKS = ["easy_cache", "medium_db", "hard_outage"]
 BENCHMARK = "openenv_sre"
@@ -37,7 +50,7 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
     print(f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}", flush=True)
 
 
-def get_action(client: openai.OpenAI, obs: Observation) -> dict:
+def get_action(client: OpenAI, obs: Observation) -> dict:
     if not client:
         return {"action_type": "restart_service", "target": "backend"}
 
@@ -76,7 +89,7 @@ clear_cache, fix_db_connection, scale_service, restart_service
     return {"action_type": "restart_service", "target": "backend"}
 
 
-async def run_task(client: openai.OpenAI, env: SREEnvironment, task: str) -> None:
+async def run_task(client: OpenAI, env: SREEnvironment, task: str) -> None:
     rewards: List[float] = []
     steps_taken = 0
     score = 0.0
@@ -114,7 +127,7 @@ async def run_task(client: openai.OpenAI, env: SREEnvironment, task: str) -> Non
 
 
 async def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    client = build_openai_client()
     env = SREEnvironment()
 
     for task in TASKS:
