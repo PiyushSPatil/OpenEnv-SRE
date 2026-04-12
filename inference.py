@@ -2,7 +2,7 @@ import asyncio
 import os
 from typing import List, Optional
 
-import openai
+from openai import OpenAI
 
 from env.environment import SREEnvironment
 from env.models import Action, Observation, Reward
@@ -114,7 +114,7 @@ async def run_task(client: openai.OpenAI, env: SREEnvironment, task: str) -> Non
 
 
 async def main() -> None:
-    client = openai.OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
     env = SREEnvironment()
 
     for task in TASKS:
