@@ -2,20 +2,17 @@ import asyncio
 import os
 from typing import List, Optional
 
-from openai import OpenAI
+import openai
 
 from env.environment import SREEnvironment
 from env.models import Action, Observation, Reward
 
-try:
-    API_KEY = os.environ["API_KEY"]
-    API_BASE_URL = os.environ["API_BASE_URL"]
-except KeyError as exc:
-    raise RuntimeError(
-        "Missing required environment variables. Use API_KEY and API_BASE_URL injected by the harness."
-    ) from exc
+API_KEY = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN")
+if not API_KEY:
+    raise RuntimeError("Missing required environment variable API_KEY or HF_TOKEN.")
 
-MODEL_NAME = os.environ.get("MODEL_NAME") or os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
+API_BASE_URL = os.environ["API_BASE_URL"]
+MODEL_NAME = os.environ.get("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 
 TASKS = ["easy_cache", "medium_db", "hard_outage"]
 BENCHMARK = "openenv_sre"
@@ -40,7 +37,7 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
     print(f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}", flush=True)
 
 
-def get_action(client: OpenAI, obs: Observation) -> dict:
+def get_action(client: openai.OpenAI, obs: Observation) -> dict:
     if not client:
         return {"action_type": "restart_service", "target": "backend"}
 
@@ -79,7 +76,7 @@ clear_cache, fix_db_connection, scale_service, restart_service
     return {"action_type": "restart_service", "target": "backend"}
 
 
-async def run_task(client: OpenAI, env: SREEnvironment, task: str) -> None:
+async def run_task(client: openai.OpenAI, env: SREEnvironment, task: str) -> None:
     rewards: List[float] = []
     steps_taken = 0
     score = 0.0
@@ -117,7 +114,7 @@ async def run_task(client: OpenAI, env: SREEnvironment, task: str) -> None:
 
 
 async def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    client = openai.OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
     env = SREEnvironment()
 
     for task in TASKS:
