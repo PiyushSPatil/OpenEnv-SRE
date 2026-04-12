@@ -7,18 +7,15 @@ from openai import OpenAI
 from env.environment import SREEnvironment
 from env.models import Action, Observation, Reward
 
-# API_KEY = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("HF_TOKEN") or "dummy"
-# API_BASE_URL = "https://router.huggingface.co/v1"
-# MODEL_NAME = os.environ.get("MODEL_NAME") or os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
+try:
+    API_KEY = os.environ["API_KEY"]
+    API_BASE_URL = os.environ["API_BASE_URL"]
+except KeyError as exc:
+    raise RuntimeError(
+        "Missing required environment variables. Use API_KEY and API_BASE_URL injected by the harness."
+    ) from exc
 
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
-MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
-
-# Debug logging  
-print(f"[DEBUG] API_KEY set: {bool(API_KEY)}, length: {len(API_KEY) if API_KEY else 0}", flush=True)
-print(f"[DEBUG] API_BASE_URL: {API_BASE_URL}", flush=True)
-print(f"[DEBUG] MODEL_NAME: {MODEL_NAME}", flush=True)
+MODEL_NAME = os.environ.get("MODEL_NAME") or os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 
 TASKS = ["easy_cache", "medium_db", "hard_outage"]
 BENCHMARK = "openenv_sre"
@@ -120,17 +117,7 @@ async def run_task(client: OpenAI, env: SREEnvironment, task: str) -> None:
 
 
 async def main() -> None:
-    client = None
-    try:
-        print("[DEBUG] Initializing OpenAI client...", flush=True)
-        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-        print("[DEBUG] OpenAI client initialized successfully", flush=True)
-    except Exception as e:
-        print(f"[ERROR] Failed to initialize OpenAI client: {type(e).__name__}: {e}", flush=True)
-        print(f"[ERROR] API_KEY type: {type(API_KEY)}, value length: {len(API_KEY) if API_KEY else 0}", flush=True)
-        print(f"[ERROR] API_BASE_URL type: {type(API_BASE_URL)}, value: {API_BASE_URL}", flush=True)
-        client = None
-
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
     env = SREEnvironment()
 
     for task in TASKS:
