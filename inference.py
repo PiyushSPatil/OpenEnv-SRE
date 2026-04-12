@@ -7,9 +7,9 @@ from openai import OpenAI
 from env.environment import SREEnvironment
 from env.models import Action, Observation, Reward
 
-API_KEY = os.getenv("API_KEY") or os.getenv("HF_TOKEN")
-API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
-MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
+API_KEY = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("HF_TOKEN")
+API_BASE_URL = os.environ.get("API_BASE_URL") or os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
+MODEL_NAME = os.environ.get("MODEL_NAME") or os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 
 TASKS = ["easy_cache", "medium_db", "hard_outage"]
 BENCHMARK = "openenv_sre"
@@ -35,9 +35,6 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
 
 
 def get_action(client: OpenAI, obs: Observation) -> dict:
-    if not client:
-        return {"action_type": "restart_service", "target": "backend"}
-
     try:
         res = client.chat.completions.create(
             model=MODEL_NAME,
@@ -111,22 +108,7 @@ async def run_task(client: OpenAI, env: SREEnvironment, task: str) -> None:
 
 
 async def main() -> None:
-    try:
-        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-    except Exception as e:
-        print(f"[DEBUG] Client init failed: {e}", flush=True)
-        client = None
-
-    # 🔥 TRY proxy call (no crash)
-    if client:
-        try:
-            client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[{"role": "user", "content": "ping"}],
-                temperature=0,
-            )
-        except Exception as e:
-            print(f"[DEBUG] Proxy ping failed: {e}", flush=True)
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
     env = SREEnvironment()
 
