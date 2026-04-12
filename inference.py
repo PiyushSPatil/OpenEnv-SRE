@@ -1,5 +1,4 @@
 import asyncio
-import inspect
 import os
 from typing import List, Optional
 
@@ -17,22 +16,7 @@ MODEL_NAME = os.environ.get("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 
 
 def build_openai_client() -> OpenAI:
-    try:
-        params = {"api_key": API_KEY}
-        sig = inspect.signature(OpenAI)
-        if "base_url" in sig.parameters:
-            params["base_url"] = API_BASE_URL
-        elif "api_base" in sig.parameters:
-            params["api_base"] = API_BASE_URL
-        else:
-            # Fallback: try base_url anyway
-            params["base_url"] = API_BASE_URL
-        return OpenAI(**params)
-    except Exception as e:
-        print(f"[ERROR] Failed to build OpenAI client: {type(e).__name__}: {e}", flush=True)
-        print(f"[DEBUG] API_KEY length: {len(API_KEY) if API_KEY else 0}", flush=True)
-        print(f"[DEBUG] API_BASE_URL: {API_BASE_URL}", flush=True)
-        raise
+    return OpenAI(api_key=API_KEY, base_url=API_BASE_URL)
 
 TASKS = ["easy_cache", "medium_db", "hard_outage"]
 BENCHMARK = "openenv_sre"
@@ -134,12 +118,7 @@ async def run_task(client: OpenAI, env: SREEnvironment, task: str) -> None:
 
 
 async def main() -> None:
-    try:
-        client = build_openai_client()
-    except Exception as e:
-        print(f"[ERROR] main: client init failed: {e}", flush=True)
-        client = None
-    
+    client = build_openai_client()
     env = SREEnvironment()
 
     for task in TASKS:
