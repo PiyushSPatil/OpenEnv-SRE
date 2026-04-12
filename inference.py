@@ -1,72 +1,42 @@
+import asyncio
 import os
+from typing import List, Optional
+
 import requests
 from openai import OpenAI
 
 # -----------------------------
-# CONFIG (SAFE DEFAULTS)
+# CONFIG (STRICT LIKE SAMPLE)
 # -----------------------------
-MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"  
+API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
+MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
+
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 
+TASKS = ["easy_cache", "medium_db", "hard_outage"]
+BENCHMARK = "openenv_sre"
 MAX_STEPS = 6
-ENV_NAME = "openenv_sre"
+SUCCESS_SCORE_THRESHOLD = 0.1
 
 # -----------------------------
-# SAFE CLIENT INIT (NEVER CRASH)
+# LOGGING (EXACT FORMAT)
 # -----------------------------
-client = None
-API_KEY = os.getenv("API_KEY")
-API_BASE_URL = os.getenv("API_BASE_URL")
-
-try:
-    if API_KEY and API_BASE_URL:
-        client = OpenAI(
-            api_key=API_KEY,
-            base_url=API_BASE_URL
-        )
-        print("[INFO] OpenAI client initialized", flush=True)
-    else:
-        print("[WARNING] Missing API_KEY or API_BASE_URL", flush=True)
-except Exception as e:
-    print(f"[ERROR] Client init failed: {e}", flush=True)
-    client = None
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
-# -----------------------------
-# 🔥 FORCE PROXY CALL (CRITICAL)
-# -----------------------------
-if client:
-    try:
-        client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": "ping"}],
-            temperature=0,
-        )
-        print("[INFO] Proxy call success", flush=True)
-    except Exception as e:
-        print(f"[ERROR] Proxy call failed: {e}", flush=True)
-
-
-# -----------------------------
-# LOGGING (STRICT FORMAT)
-# -----------------------------
-def log_start(task):
-    print(f"[START] task={task} env={ENV_NAME} model={MODEL_NAME}", flush=True)
-
-
-def log_step(step, action, reward, done, error=None):
-    err = error if error else "null"
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
+    error_val = error if error else "null"
+    done_val = str(done).lower()
     print(
-        f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={err}",
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}",
         flush=True,
     )
 
 
-def log_end(success, steps, rewards):
-    total = sum(rewards)
-    score = min(max(total, 0.0), 1.0)
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-
     print(
         f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
         flush=True,
@@ -74,17 +44,14 @@ def log_end(success, steps, rewards):
 
 
 # -----------------------------
-# LLM ACTION (ALWAYS ATTEMPT)
+# 🔥 YOUR SRE LOGIC (LLM)
 # -----------------------------
-def llm_action(obs):
-    if not client:
-        return {"action_type": "restart_service", "target": "backend"}
-
+def get_action(client: OpenAI, obs) -> dict:
     try:
-        response = client.chat.completions.create(
+        completion = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "You are an SRE expert."},
+                {"role": "system", "content": "You are an expert SRE engineer."},
                 {
                     "role": "user",
                     "content": f"""
@@ -92,7 +59,7 @@ Logs: {obs.get('logs')}
 Metrics: {obs.get('metrics')}
 Alerts: {obs.get('alerts')}
 
-Return ONE:
+Choose ONE action:
 clear_cache, fix_db_connection, scale_service, restart_service
 """
                 },
@@ -100,7 +67,7 @@ clear_cache, fix_db_connection, scale_service, restart_service
             temperature=0,
         )
 
-        text = (response.choices[0].message.content or "").lower()
+        text = (completion.choices[0].message.content or "").lower()
 
         if "fix_db" in text:
             return {"action_type": "fix_db_connection", "target": None}
@@ -110,23 +77,24 @@ clear_cache, fix_db_connection, scale_service, restart_service
             return {"action_type": "clear_cache", "target": None}
 
     except Exception as e:
-        print(f"[ERROR] LLM call failed: {e}", flush=True)
+        print(f"[DEBUG] LLM failed: {e}", flush=True)
 
     return {"action_type": "restart_service", "target": "backend"}
 
 
 # -----------------------------
-# RUN TASK
+# RUN TASK (SYNC ENV INSIDE ASYNC)
 # -----------------------------
-def run_task(task_id):
-    log_start(task_id)
+async def run_task(client: OpenAI, task: str):
+    log_start(task=task, env=BENCHMARK, model=MODEL_NAME)
 
-    rewards = []
-    success = False
+    rewards: List[float] = []
     steps_taken = 0
+    success = False
 
     try:
-        res = requests.post(f"{ENV_BASE_URL}/reset", json={"task_id": task_id}, timeout=10)
+        # RESET
+        res = requests.post(f"{ENV_BASE_URL}/reset", json={"task_id": task}, timeout=10)
         data = res.json()
 
         obs = data.get("observation", {})
@@ -136,24 +104,23 @@ def run_task(task_id):
             if done:
                 break
 
-            # 🔥 ALWAYS attempt LLM call
-            action = llm_action(obs)
+            action = get_action(client, obs)
 
             try:
                 res = requests.post(f"{ENV_BASE_URL}/step", json=action, timeout=10)
                 data = res.json()
             except Exception as e:
-                log_step(step, {"error": str(e)}, 0.0, True, error=str(e))
+                log_step(step, str(action), 0.0, True, str(e))
                 break
 
             obs = data.get("observation", {})
-            reward = round(data.get("reward", {}).get("value", 0.0), 2)
+            reward = float(data.get("reward", {}).get("value", 0.0))
             done = data.get("done", False)
 
             rewards.append(reward)
             steps_taken = step
 
-            log_step(step, action, reward, done)
+            log_step(step, str(action), reward, done, None)
 
             if obs.get("system_status") == "healthy":
                 success = True
@@ -163,20 +130,34 @@ def run_task(task_id):
             success = True
 
     except Exception as e:
-        log_step(0, {"error": str(e)}, 0.0, True, error=str(e))
+        log_step(0, "error", 0.0, True, str(e))
 
-    log_end(success, steps_taken, rewards)
+    # SCORE NORMALIZATION
+    total = sum(rewards)
+    score = min(max(total, 0.0), 1.0)
+
+    log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 # -----------------------------
-# MAIN
+# MAIN (STRICT SAMPLE STYLE)
 # -----------------------------
-def main():
-    tasks = ["easy_cache", "medium_db", "hard_outage"]
+async def main():
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    for task in tasks:
-        run_task(task)
+    # 🔥 IMPORTANT: FORCE PROXY CALL
+    try:
+        client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": "ping"}],
+            temperature=0,
+        )
+    except Exception as e:
+        print(f"[DEBUG] Proxy ping failed: {e}", flush=True)
+
+    for task in TASKS:
+        await run_task(client, task)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
