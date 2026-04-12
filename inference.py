@@ -8,10 +8,16 @@ from openai import OpenAI
 # -----------------------------
 # CONFIG
 # -----------------------------
-API_KEY = os.getenv("API_KEY")
-API_BASE_URL = os.getenv("API_BASE_URL")
-MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
+try:
+    API_KEY = os.environ["API_KEY"]
+    API_BASE_URL = os.environ["API_BASE_URL"]
+except KeyError as exc:
+    raise RuntimeError(
+        "Missing required environment variables."
+        " Ensure API_KEY and API_BASE_URL are provided by the evaluation harness."
+    ) from exc
 
+MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 
 TASKS = ["easy_cache", "medium_db", "hard_outage"]
@@ -42,22 +48,13 @@ def log_end(success, steps, score, rewards):
 
 
 # -----------------------------
-# SAFE CLIENT INIT (NO CRASH)
+# CLIENT INIT
 # -----------------------------
 def init_client():
-    try:
-        if not API_KEY or not API_BASE_URL:
-            print("[DEBUG] Missing API env, skipping LLM", flush=True)
-            return None
-
-        return OpenAI(
-            base_url=API_BASE_URL,
-            api_key=API_KEY
-        )
-
-    except Exception as e:
-        print(f"[DEBUG] Client init failed: {e}", flush=True)
-        return None
+    return OpenAI(
+        base_url=API_BASE_URL,
+        api_key=API_KEY,
+    )
 
 
 # -----------------------------
