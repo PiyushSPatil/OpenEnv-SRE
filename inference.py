@@ -3,36 +3,31 @@ import requests
 from openai import OpenAI
 
 # -----------------------------
-# CONFIG (VALIDATOR SAFE)
+# CONFIG (VALIDATOR MANDATORY)
 # -----------------------------
-MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
-ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
+# Use the exact environment variables injected by the platform
+API_KEY = os.environ.get("API_KEY")
+API_BASE_URL = os.environ.get("API_BASE_URL")
+MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4") # Fallback to a standard name if missing
 
-# 🔥 MUST USE THESE
-API_KEY = os.getenv("API_KEY") or os.getenv("HF_TOKEN")
-API_BASE_URL = os.getenv("API_BASE_URL")
-
+ENV_BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
 MAX_STEPS = 6
 ENV_NAME = "openenv_sre"
 
 # -----------------------------
-# SAFE CLIENT INIT (NO CRASH)
+# CLIENT INITIALIZATION
 # -----------------------------
-client = None
-try:
-    if API_KEY and API_BASE_URL:
-        client = OpenAI(
-            api_key=API_KEY,
-            base_url=API_BASE_URL
-        )
-        print("[INFO] OpenAI client initialized", flush=True)
-    else:
-        print("[ERROR] Missing API_KEY/API_BASE_URL", flush=True)
-except Exception as e:
-    print(f"[ERROR] Client init failed: {e}", flush=True)
+# The validator requires base_url=os.environ["API_BASE_URL"]
+if not API_KEY or not API_BASE_URL:
+    raise RuntimeError("MISSING CRITICAL CREDENTIALS: API_KEY or API_BASE_URL not found in environment.")
+
+client = OpenAI(
+    api_key=API_KEY,
+    base_url=API_BASE_URL
+)
 
 # -----------------------------
-# LOGGING (STRICT FORMAT)
+# LOGGING
 # -----------------------------
 def log_start(task):
     print(f"[START] task={task} env={ENV_NAME} model={MODEL_NAME}", flush=True)
@@ -48,50 +43,42 @@ def log_end(success, steps, rewards):
     total = sum(rewards)
     score = min(max(total, 0.0), 1.0)
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-
     print(
         f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
         flush=True
     )
 
 # -----------------------------
-# LLM ACTION (ALWAYS ATTEMPT)
+# LLM ACTION
 # -----------------------------
 def llm_action(obs):
-    if client:
-        try:
-            response = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": "You are an SRE expert."},
-                    {
-                        "role": "user",
-                        "content": f"""
-Logs: {obs.get('logs')}
-Metrics: {obs.get('metrics')}
-Alerts: {obs.get('alerts')}
+    try:
+        # All requests here will go through the LiteLLM proxy via the base_url set above
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "You are an SRE expert. Respond with action only."},
+                {
+                    "role": "user",
+                    "content": f"Logs: {obs.get('logs')}\nMetrics: {obs.get('metrics')}\nAlerts: {obs.get('alerts')}\n\nReturn ONE: clear_cache, fix_db_connection, scale_service, restart_service"
+                }
+            ],
+            temperature=0,
+        )
 
-Return ONE:
-clear_cache, fix_db_connection, scale_service, restart_service
-"""
-                    }
-                ],
-                temperature=0,
-            )
+        text = (response.choices[0].message.content or "").lower()
 
-            text = (response.choices[0].message.content or "").lower()
+        if "fix_db" in text:
+            return {"action_type": "fix_db_connection", "target": None}
+        if "scale" in text:
+            return {"action_type": "scale_service", "target": "api"}
+        if "clear" in text:
+            return {"action_type": "clear_cache", "target": None}
+            
+    except Exception as e:
+        print(f"[ERROR] Proxy LLM call failed: {e}", flush=True)
 
-            if "fix_db" in text:
-                return {"action_type": "fix_db_connection", "target": None}
-            if "scale" in text:
-                return {"action_type": "scale_service", "target": "api"}
-            if "clear_cache" in text:
-                return {"action_type": "clear_cache", "target": None}
-
-        except Exception as e:
-            print(f"[ERROR] LLM call failed: {e}", flush=True)
-
-    # fallback AFTER attempt
+    # Only fall back if the network call actually happens and fails
     return {"action_type": "restart_service", "target": "backend"}
 
 # -----------------------------
@@ -99,7 +86,6 @@ clear_cache, fix_db_connection, scale_service, restart_service
 # -----------------------------
 def run_task(task_id):
     log_start(task_id)
-
     rewards = []
     success = False
     steps_taken = 0
@@ -107,7 +93,6 @@ def run_task(task_id):
     try:
         res = requests.post(f"{ENV_BASE_URL}/reset", json={"task_id": task_id}, timeout=10)
         data = res.json()
-
         obs = data.get("observation", {})
         done = data.get("done", False)
 
@@ -115,14 +100,13 @@ def run_task(task_id):
             if done:
                 break
 
-            # 🔥 ALWAYS CALL LLM
             action = llm_action(obs)
-
+            
             try:
                 res = requests.post(f"{ENV_BASE_URL}/step", json=action, timeout=10)
                 data = res.json()
             except Exception as e:
-                log_step(step, {"error": str(e)}, 0.0, True, error=str(e))
+                log_step(step, action, 0.0, True, error=str(e))
                 break
 
             obs = data.get("observation", {})
@@ -131,27 +115,19 @@ def run_task(task_id):
 
             rewards.append(reward)
             steps_taken = step
-
             log_step(step, action, reward, done)
 
             if obs.get("system_status") == "healthy":
                 success = True
                 break
 
-        if obs.get("system_status") == "healthy":
-            success = True
-
     except Exception as e:
-        log_step(0, {"error": str(e)}, 0.0, True, error=str(e))
+        print(f"[ERROR] Task execution error: {e}", flush=True)
 
     log_end(success, steps_taken, rewards)
 
-# -----------------------------
-# MAIN
-# -----------------------------
 def main():
     tasks = ["easy_cache", "medium_db", "hard_outage"]
-
     for task in tasks:
         run_task(task)
 
