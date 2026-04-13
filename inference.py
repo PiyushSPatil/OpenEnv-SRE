@@ -7,11 +7,13 @@ from openai import OpenAI
 from env.environment import SREEnvironment
 from env.models import Action, Observation, Reward
 
-API_KEY = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY")
+API_KEY = os.environ.get("API_KEY")
 if not API_KEY:
-    raise RuntimeError("Missing required environment variable API_KEY, HF_TOKEN, or OPENAI_API_KEY.")
+    raise RuntimeError("Missing required environment variable API_KEY.")
 
-API_BASE_URL = os.environ["API_BASE_URL"]
+API_BASE_URL = os.environ.get("API_BASE_URL")
+if not API_BASE_URL:
+    raise RuntimeError("Missing required environment variable API_BASE_URL.")
 MODEL_NAME = os.environ.get("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 
 
